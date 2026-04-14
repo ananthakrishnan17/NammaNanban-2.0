@@ -94,41 +94,31 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                   validator: (v) => v!.trim().isEmpty ? 'Name required' : null, textCapitalization: TextCapitalization.words),
               SizedBox(height: 10.h),
 
-              // CATEGORY — inline quick add
+              // CATEGORY — inline quick add via ProductBloc.repository (direct DB call)
               SearchableDropdownWithAdd<Category>(
-                label: 'Category',
-                hint: 'Select or create category',
-                icon: Icons.category,
-                selectedValue: _selectedCategory,
-                items: categories,
-                itemLabel: (c) => '${c.icon} ${c.name}',
-                itemId: (c) => c.id,
+                label: 'Category', hint: 'Select or create category', icon: Icons.category,
+                selectedValue: _selectedCategory, items: categories,
+                itemLabel: (c) => '${c.icon} ${c.name}', itemId: (c) => c.id,
                 onChanged: (c) => setState(() => _selectedCategory = c),
                 addNewLabel: 'Create Category',
                 onAddNew: (name) async {
-                  final newCategory = Category(
-                    id: 0,
-                    name: name,
-                    icon: '📦',
-                    color: '#FF6B35',
-                  );
-
-                  // 🔥 SAVE TO DB
-                  context.read<ProductBloc>().add(AddProductCategory(newCategory));
-
-                  // wait for DB + reload
-                  await Future.delayed(const Duration(milliseconds: 300));
-
-                  // refresh UI
-                  context.read<ProductBloc>().add(LoadProducts());
-
-                  setState(() => _selectedCategory = newCategory);
-                  return newCategory;
+                  // ✅ FIXED: Use repository getter directly — no more dynamic cast
+                  final bloc = context.read<ProductBloc>();
+                  final newCategory = Category(name: name, icon: '📦', color: '#FF6B35');
+                  final id = await bloc.repository.addCategory(newCategory);
+                  // Reload so the dropdown list refreshes
+                  bloc.add(LoadProducts());
+                  // Wait for reload
+                  await Future.delayed(const Duration(milliseconds: 400));
+                  // Return the created category with the real DB id
+                  final created = Category(id: id, name: name, icon: '📦', color: '#FF6B35');
+                  setState(() => _selectedCategory = created);
+                  return created;
                 },
               ),
               SizedBox(height: 10.h),
 
-              // BRAND — inline quick add
+              // BRAND — inline quick add via MastersBloc + direct DB call
               SearchableDropdownWithAdd<Brand>(
                 label: 'Brand', hint: 'Select or create brand', icon: Icons.branding_watermark,
                 selectedValue: _selectedBrand, items: brands,
@@ -136,9 +126,14 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 onChanged: (b) => setState(() => _selectedBrand = b),
                 addNewLabel: 'Create Brand',
                 onAddNew: (name) async {
-                  context.read<MastersBloc>().add(AddBrand(name));
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  return Brand(id: 0, name: name, createdAt: DateTime.now());
+                  // ✅ FIXED: Use MastersBloc.repository directly for real id
+                  final bloc = context.read<MastersBloc>();
+                  final id = await bloc.repository.addBrand(name);
+                  bloc.add(LoadAllMasters());
+                  await Future.delayed(const Duration(milliseconds: 400));
+                  final created = Brand(id: id, name: name, createdAt: DateTime.now());
+                  setState(() => _selectedBrand = created);
+                  return created;
                 },
               ),
               SizedBox(height: 20.h),
@@ -181,7 +176,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ]),
               SizedBox(height: 10.h),
 
-              // UOM — inline quick add
+              // UOM — inline quick add via MastersBloc.repository for real id
               SearchableDropdownWithAdd<UomUnit>(
                 label: 'Unit of Measure', hint: 'Select or create unit', icon: Icons.straighten,
                 selectedValue: _selectedUom, items: units,
@@ -189,10 +184,16 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 onChanged: (u) => setState(() => _selectedUom = u),
                 addNewLabel: 'Create Unit',
                 onAddNew: (name) async {
+                  // ✅ FIXED: Use MastersBloc.repository directly for real id
+                  final bloc = context.read<MastersBloc>();
                   final shortName = name.length > 4 ? name.substring(0, 4) : name;
-                  context.read<MastersBloc>().add(AddUnit(UomUnit(name: name, shortName: shortName, createdAt: DateTime.now())));
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  return UomUnit(id: 0, name: name, shortName: shortName, createdAt: DateTime.now());
+                  final newUnit = UomUnit(name: name, shortName: shortName, createdAt: DateTime.now());
+                  final id = await bloc.repository.addUnit(newUnit);
+                  bloc.add(LoadAllMasters());
+                  await Future.delayed(const Duration(milliseconds: 400));
+                  final created = UomUnit(id: id, name: name, shortName: shortName, createdAt: DateTime.now());
+                  setState(() => _selectedUom = created);
+                  return created;
                 },
               ),
               SizedBox(height: 20.h),
