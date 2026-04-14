@@ -1,0 +1,301 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+
+import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/currency_formatter.dart';
+import '../../../masters/domain/entities/masters.dart';
+import '../../../masters/presentation/bloc/masters_bloc.dart';
+import '../../../products/domain/entities/product.dart';
+import '../../../products/presentation/bloc/product_bloc.dart';
+import '../../domain/entities/purchase.dart';
+
+class AddPurchasePage extends StatefulWidget {
+  const AddPurchasePage({super.key});
+  @override State<AddPurchasePage> createState() => _AddPurchasePageState();
+}
+
+class _AddPurchasePageState extends State<AddPurchasePage> {
+  final List<PurchaseCartItem> _items = [];
+  Supplier? _selectedSupplier;
+  String _paymentMode = 'cash';
+  DateTime _purchaseDate = DateTime.now();
+  final _notesCtrl = TextEditingController();
+  bool _isSaving = false;
+
+  double get _total => _items.fold(0.0, (s, i) => s + i.totalCost);
+  double get _gstTotal => _items.fold(0.0, (s, i) => s + i.gstAmount);
+
+  @override void dispose() { _notesCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Purchase Entry'),
+        actions: [
+          TextButton(
+            onPressed: _isSaving || _items.isEmpty ? null : _savePurchase,
+            child: Text('Save', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600, fontSize: 16.sp)),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(14.w),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // Supplier
+                _sectionLabel('Supplier'),
+                BlocBuilder<MastersBloc, MastersState>(
+                  builder: (ctx, state) {
+                    return DropdownButtonFormField<Supplier>(
+                      value: _selectedSupplier,
+                      decoration: const InputDecoration(labelText: 'Select Supplier (optional)', prefixIcon: Icon(Icons.local_shipping)),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('No Supplier / Walk-in')),
+                        ...state.suppliers.map((s) => DropdownMenuItem(value: s, child: Text(s.name))),
+                      ],
+                      onChanged: (v) => setState(() => _selectedSupplier = v),
+                    );
+                  },
+                ),
+                SizedBox(height: 12.h),
+
+                // Purchase Date
+                _sectionLabel('Purchase Date'),
+                GestureDetector(
+                  onTap: () async {
+                    final d = await showDatePicker(context: context, initialDate: _purchaseDate,
+                        firstDate: DateTime(2020), lastDate: DateTime.now());
+                    if (d != null) setState(() => _purchaseDate = d);
+                  },
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+                    decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider)),
+                    child: Row(children: [
+                      const Icon(Icons.calendar_today, color: AppTheme.textSecondary),
+                      SizedBox(width: 10.w),
+                      Text(DateFormat('dd MMM yyyy').format(_purchaseDate), style: AppTheme.body),
+                    ]),
+                  ),
+                ),
+                SizedBox(height: 16.h),
+
+                // Items
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  _sectionLabel('Items'),
+                  TextButton.icon(
+                    onPressed: () => _addItemSheet(context),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add Item'),
+                  ),
+                ]),
+                if (_items.isEmpty)
+                  Container(
+                    padding: EdgeInsets.all(20.w),
+                    decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider, style: BorderStyle.solid)),
+                    child: Center(child: Column(children: [
+                      Text('📦', style: TextStyle(fontSize: 32.sp)),
+                      SizedBox(height: 8.h),
+                      Text('Tap "Add Item" to add products', style: AppTheme.caption),
+                    ])),
+                  )
+                else
+                  ..._items.asMap().entries.map((e) => _itemTile(e.key, e.value)),
+
+                SizedBox(height: 12.h),
+                // Payment mode
+                _sectionLabel('Payment Mode'),
+                Row(
+                  children: ['cash', 'upi', 'card', 'credit'].map((m) {
+                    final isSelected = _paymentMode == m;
+                    return Expanded(child: GestureDetector(
+                      onTap: () => setState(() => _paymentMode = m),
+                      child: Container(
+                        margin: EdgeInsets.only(right: 6.w),
+                        padding: EdgeInsets.symmetric(vertical: 10.h),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppTheme.primary.withOpacity(0.1) : AppTheme.surface,
+                          borderRadius: BorderRadius.circular(8.r),
+                          border: Border.all(color: isSelected ? AppTheme.primary : AppTheme.divider),
+                        ),
+                        child: Text(m.toUpperCase(), textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 10.sp, color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+                                fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
+                      ),
+                    ));
+                  }).toList(),
+                ),
+                SizedBox(height: 12.h),
+                TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes (optional)', prefixIcon: Icon(Icons.note))),
+                SizedBox(height: 80.h),
+              ]),
+            ),
+          ),
+
+          // Bottom summary
+          if (_items.isNotEmpty)
+            Container(
+              padding: EdgeInsets.all(16.w),
+              decoration: BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: AppTheme.divider)),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -4))]),
+              child: Column(children: [
+                if (_gstTotal > 0) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('GST Total', style: AppTheme.caption),
+                  Text(CurrencyFormatter.format(_gstTotal), style: AppTheme.body),
+                ]),
+                SizedBox(height: 4.h),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('Total Amount', style: AppTheme.heading3),
+                  Text(CurrencyFormatter.format(_total), style: AppTheme.price),
+                ]),
+                SizedBox(height: 12.h),
+                ElevatedButton(
+                  onPressed: _isSaving ? null : _savePurchase,
+                  child: _isSaving ? const CircularProgressIndicator(color: Colors.white) : Text('Save Purchase — ${CurrencyFormatter.format(_total)}'),
+                ),
+              ]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String label) => Padding(
+    padding: EdgeInsets.only(bottom: 6.h),
+    child: Text(label, style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+  );
+
+  Widget _itemTile(int index, PurchaseCartItem item) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 8.h),
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider)),
+      child: Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(item.productName, style: AppTheme.heading3),
+          Text('${item.quantity} ${item.unit} × ${CurrencyFormatter.format(item.unitCost)} | GST ${item.gstRate}%', style: AppTheme.caption),
+          Text(CurrencyFormatter.format(item.totalCost), style: AppTheme.price.copyWith(fontSize: 14.sp)),
+        ])),
+        IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.danger), onPressed: () => setState(() => _items.removeAt(index))),
+      ]),
+    );
+  }
+
+  void _addItemSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
+      builder: (_) => BlocBuilder<ProductBloc, ProductState>(
+        builder: (ctx, state) {
+          if (state is! ProductsLoaded) return const SizedBox();
+          return _ProductPickerForPurchase(
+            products: state.products,
+            onItemAdded: (item) { setState(() => _items.add(item)); Navigator.pop(context); },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _savePurchase() async {
+    setState(() => _isSaving = true);
+    context.read<PurchaseBloc>().add(SavePurchaseEvent(
+      items: _items, supplierId: _selectedSupplier?.id,
+      supplierName: _selectedSupplier?.name, paymentMode: _paymentMode,
+      notes: _notesCtrl.text.isEmpty ? null : _notesCtrl.text, purchaseDate: _purchaseDate,
+    ));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase saved! Stock updated.'), backgroundColor: AppTheme.accent));
+      Navigator.pop(context);
+    }
+  }
+}
+
+// ─── Product picker sheet for purchase ────────────────────────────────────────
+class _ProductPickerForPurchase extends StatefulWidget {
+  final List<Product> products;
+  final void Function(PurchaseCartItem) onItemAdded;
+  const _ProductPickerForPurchase({required this.products, required this.onItemAdded});
+  @override State<_ProductPickerForPurchase> createState() => _ProductPickerForPurchaseState();
+}
+
+class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
+  Product? _selected;
+  final _qtyCtrl = TextEditingController(text: '1');
+  final _costCtrl = TextEditingController();
+  double _gstRate = 0;
+  String _searchQ = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.products.where((p) => p.name.toLowerCase().contains(_searchQ.toLowerCase())).toList();
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.8,
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
+      child: Column(children: [
+        SizedBox(height: 12.h),
+        Container(width: 40.w, height: 4.h, decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2.r))),
+        SizedBox(height: 12.h),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.w),
+          child: TextField(
+            onChanged: (v) => setState(() => _searchQ = v),
+            decoration: const InputDecoration(hintText: 'Search product...', prefixIcon: Icon(Icons.search)),
+          ),
+        ),
+        SizedBox(height: 8.h),
+        Expanded(child: _selected == null
+            ? ListView.builder(
+          itemCount: filtered.length,
+          itemBuilder: (_, i) => ListTile(
+            title: Text(filtered[i].name, style: AppTheme.body),
+            subtitle: Text('Buy: ₹${filtered[i].purchasePrice} | Stock: ${filtered[i].stockQuantity} ${filtered[i].unit}', style: AppTheme.caption),
+            onTap: () => setState(() {
+              _selected = filtered[i];
+              _costCtrl.text = filtered[i].purchasePrice.toStringAsFixed(2);
+              _gstRate = filtered[i].gstRate;
+            }),
+          ),
+        )
+            : Padding(
+          padding: EdgeInsets.all(16.w),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Expanded(child: Text(_selected!.name, style: AppTheme.heading2)),
+              TextButton(onPressed: () => setState(() => _selected = null), child: const Text('Change')),
+            ]),
+            SizedBox(height: 12.h),
+            Row(children: [
+              Expanded(child: TextField(controller: _qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity'))),
+              SizedBox(width: 10.w),
+              Expanded(child: TextField(controller: _costCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit Cost (₹)'))),
+            ]),
+            SizedBox(height: 10.h),
+            DropdownButtonFormField<double>(
+              value: _gstRate,
+              decoration: const InputDecoration(labelText: 'GST Rate'),
+              items: [0.0, 5.0, 12.0, 18.0, 28.0].map((r) => DropdownMenuItem(value: r, child: Text('${r.toStringAsFixed(0)}%'))).toList(),
+              onChanged: (v) => setState(() => _gstRate = v ?? 0),
+            ),
+            SizedBox(height: 16.h),
+            ElevatedButton(
+              onPressed: () {
+                final qty = double.tryParse(_qtyCtrl.text) ?? 1;
+                final cost = double.tryParse(_costCtrl.text) ?? _selected!.purchasePrice;
+                widget.onItemAdded(PurchaseCartItem(
+                    productId: _selected!.id!, productName: _selected!.name,
+                    unit: _selected!.unit, quantity: qty, unitCost: cost, gstRate: _gstRate));
+              },
+              child: const Text('Add to Purchase'),
+            ),
+          ]),
+        ),
+        ),
+      ]),
+    );
+  }
+}
