@@ -15,12 +15,14 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 2, onCreate: _createDB, onUpgrade: _upgradeDB,
+    return await openDatabase(path, version: 3,
+        onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
 
   Future<void> _createDB(Database db, int version) async {
     final now = DateTime.now().toIso8601String();
+
     await db.execute('''CREATE TABLE shop_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
       shop_name TEXT NOT NULL, address TEXT, phone TEXT, logo_path TEXT,
       currency TEXT DEFAULT 'Rs.', tax_enabled INTEGER DEFAULT 0, tax_rate REAL DEFAULT 0.0,
@@ -60,14 +62,46 @@ class DatabaseHelper {
       FOREIGN KEY (brand_id) REFERENCES brands (id),
       FOREIGN KEY (uom_id) REFERENCES uom_units (id))''');
 
+    // ── product_uoms: Multiple UOM per product (NEW v3) ─────────────────────
+    await db.execute('''CREATE TABLE product_uoms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      uom_id INTEGER NOT NULL,
+      uom_name TEXT NOT NULL,
+      uom_short_name TEXT NOT NULL,
+      conversion_qty REAL NOT NULL DEFAULT 1.0,
+      selling_price REAL NOT NULL,
+      wholesale_price REAL DEFAULT 0.0,
+      purchase_price REAL DEFAULT 0.0,
+      is_default INTEGER DEFAULT 0,
+      FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE,
+      FOREIGN KEY (uom_id) REFERENCES uom_units (id))''');
+
+    // ── app_users: Admin/User roles (NEW v3) ─────────────────────────────────
+    await db.execute('''CREATE TABLE app_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      pin TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      can_bill INTEGER DEFAULT 1,
+      can_view_reports INTEGER DEFAULT 0,
+      can_manage_products INTEGER DEFAULT 0,
+      can_manage_masters INTEGER DEFAULT 0,
+      can_view_expenses INTEGER DEFAULT 0,
+      can_manage_purchase INTEGER DEFAULT 0,
+      can_view_dashboard INTEGER DEFAULT 1,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL)''');
+
     await db.execute('''CREATE TABLE bills (id INTEGER PRIMARY KEY AUTOINCREMENT,
       bill_number TEXT NOT NULL UNIQUE, bill_type TEXT DEFAULT 'retail',
       customer_id INTEGER, customer_name TEXT, customer_address TEXT, customer_gstin TEXT,
       total_amount REAL NOT NULL, total_profit REAL NOT NULL DEFAULT 0.0,
       discount_amount REAL DEFAULT 0.0, gst_total REAL DEFAULT 0.0,
       cgst_total REAL DEFAULT 0.0, sgst_total REAL DEFAULT 0.0, igst_total REAL DEFAULT 0.0,
-      payment_mode TEXT DEFAULT 'cash', notes TEXT, created_at TEXT NOT NULL,
-      FOREIGN KEY (customer_id) REFERENCES customers (id))''');
+      payment_mode TEXT DEFAULT 'cash', billed_by_user_id INTEGER, notes TEXT,
+      created_at TEXT NOT NULL, FOREIGN KEY (customer_id) REFERENCES customers (id))''');
 
     await db.execute('''CREATE TABLE bill_items (id INTEGER PRIMARY KEY AUTOINCREMENT,
       bill_id INTEGER NOT NULL, product_id INTEGER NOT NULL, product_name TEXT NOT NULL,
@@ -124,8 +158,9 @@ class DatabaseHelper {
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    final now = DateTime.now().toIso8601String();
     if (oldVersion < 2) {
-      final cmds = [
+      final v2cmds = [
         'ALTER TABLE shop_settings ADD COLUMN default_bill_type TEXT DEFAULT "retail"',
         'ALTER TABLE shop_settings ADD COLUMN app_language TEXT DEFAULT "en"',
         'ALTER TABLE products ADD COLUMN brand_id INTEGER',
@@ -147,10 +182,35 @@ class DatabaseHelper {
         'ALTER TABLE bill_items ADD COLUMN gst_rate REAL DEFAULT 0.0',
         'ALTER TABLE bill_items ADD COLUMN gst_amount REAL DEFAULT 0.0',
       ];
-      for (final cmd in cmds) { try { await db.execute(cmd); } catch (_) {} }
-      // Create all new tables
-      await _createDB(db, newVersion);
+      for (final cmd in v2cmds) { try { await db.execute(cmd); } catch (_) {} }
     }
+    if (oldVersion < 3) {
+      // product_uoms table
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS product_uoms (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL,
+          uom_id INTEGER NOT NULL, uom_name TEXT NOT NULL, uom_short_name TEXT NOT NULL,
+          conversion_qty REAL NOT NULL DEFAULT 1.0, selling_price REAL NOT NULL,
+          wholesale_price REAL DEFAULT 0.0, purchase_price REAL DEFAULT 0.0,
+          is_default INTEGER DEFAULT 0,
+          FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE,
+          FOREIGN KEY (uom_id) REFERENCES uom_units (id))''');
+      } catch (_) {}
+      // app_users table
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS app_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+          pin TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user',
+          can_bill INTEGER DEFAULT 1, can_view_reports INTEGER DEFAULT 0,
+          can_manage_products INTEGER DEFAULT 0, can_manage_masters INTEGER DEFAULT 0,
+          can_view_expenses INTEGER DEFAULT 0, can_manage_purchase INTEGER DEFAULT 0,
+          can_view_dashboard INTEGER DEFAULT 1, is_active INTEGER DEFAULT 1,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''');
+      } catch (_) {}
+      // billed_by_user_id column to bills
+      try { await db.execute('ALTER TABLE bills ADD COLUMN billed_by_user_id INTEGER'); } catch (_) {}
+    }
+    await _seed(db, now);
   }
 
   Future<void> _seed(Database db, String now) async {
@@ -176,5 +236,9 @@ class DatabaseHelper {
     ]) { try { await db.insert('uom_units', {...u, 'created_at': now}); } catch (_) {} }
   }
 
-  Future<void> close() async { final db = await instance.database; db.close(); _database = null; }
+  Future<void> close() async {
+    final db = await instance.database;
+    db.close();
+    _database = null;
+  }
 }

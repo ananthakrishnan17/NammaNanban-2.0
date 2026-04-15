@@ -6,6 +6,7 @@ import '../../domain/entities/bill.dart';
 
 class CartItemTile extends StatelessWidget {
   final CartItem item;
+  final BillType billType; // ✅ NEW
   final VoidCallback onIncrease;
   final VoidCallback onDecrease;
   final VoidCallback onRemove;
@@ -13,6 +14,7 @@ class CartItemTile extends StatelessWidget {
   const CartItemTile({
     super.key,
     required this.item,
+    required this.billType,
     required this.onIncrease,
     required this.onDecrease,
     required this.onRemove,
@@ -20,12 +22,18 @@ class CartItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectivePrice = item.effectivePrice(billType);
+    final total = item.totalFor(billType);
+    final isWholesale = billType == BillType.wholesale;
+
     return Container(
       padding: EdgeInsets.all(12.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14.r),
-        border: Border.all(color: AppTheme.divider),
+        border: Border.all(
+          color: isWholesale ? AppTheme.secondary.withOpacity(0.3) : AppTheme.divider,
+        ),
       ),
       child: Row(
         children: [
@@ -34,53 +42,48 @@ class CartItemTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  item.productName,
-                  style: AppTheme.heading3,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(item.productName, style: AppTheme.heading3, maxLines: 1, overflow: TextOverflow.ellipsis),
                 SizedBox(height: 2.h),
-                Text(
-                  '${CurrencyFormatter.format(item.sellingPrice)} / ${item.unit}',
-                  style: AppTheme.caption,
-                ),
-                SizedBox(height: 4.h),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
                   children: [
                     Text(
-                      item.productName, // Changed from item.product.name
-                      style: AppTheme.heading3,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    SizedBox(height: 2.h),
-                    Text(
-                      '${CurrencyFormatter.format(item.sellingPrice)} / ${item.unit}',
+                      '${CurrencyFormatter.format(effectivePrice)} / ${item.unit}',
                       style: AppTheme.caption,
                     ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      // Calculated inline to fix the "totalAmount not defined" error
-                      CurrencyFormatter.format(item.sellingPrice * item.quantity),
-                      style: TextStyle(
-                        fontSize: 15.sp,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.primary,
-                        fontFamily: 'Poppins',
+                    if (isWholesale) ...[
+                      SizedBox(width: 4.w),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
+                        decoration: BoxDecoration(
+                          color: AppTheme.secondary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(3.r),
+                        ),
+                        child: Text('WS', style: TextStyle(
+                          fontSize: 8.sp, color: AppTheme.secondary,
+                          fontWeight: FontWeight.w700, fontFamily: 'Poppins',
+                        )),
                       ),
-                    ),
+                    ],
                   ],
-                )
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  CurrencyFormatter.format(total),
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.w700,
+                    color: isWholesale ? AppTheme.secondary : AppTheme.primary,
+                    fontFamily: 'Poppins',
+                  ),
+                ),
               ],
             ),
           ),
 
-          // Quantity Controls
+          // Qty controls
           Row(
             children: [
-              _quantityButton(
+              _qtyBtn(
                 icon: Icons.remove,
                 onTap: onDecrease,
                 color: item.quantity <= 1 ? AppTheme.danger : AppTheme.primary,
@@ -93,30 +96,23 @@ class CartItemTile extends StatelessWidget {
                       ? item.quantity.toInt().toString()
                       : item.quantity.toStringAsFixed(1),
                   style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary,
-                    fontFamily: 'Poppins',
+                    fontSize: 16.sp, fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary, fontFamily: 'Poppins',
                   ),
                   textAlign: TextAlign.center,
                 ),
               ),
               SizedBox(width: 10.w),
-              _quantityButton(
-                icon: Icons.add,
-                onTap: onIncrease,
-                color: AppTheme.primary,
-              ),
+              _qtyBtn(icon: Icons.add, onTap: onIncrease, color: isWholesale ? AppTheme.secondary : AppTheme.primary),
             ],
           ),
 
           SizedBox(width: 8.w),
-          // Delete button
+          // Delete
           GestureDetector(
             onTap: onRemove,
             child: Container(
-              width: 32.w,
-              height: 32.h,
+              width: 32.w, height: 32.h,
               decoration: BoxDecoration(
                 color: AppTheme.danger.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8.r),
@@ -129,20 +125,12 @@ class CartItemTile extends StatelessWidget {
     );
   }
 
-  Widget _quantityButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    required Color color,
-  }) {
+  Widget _qtyBtn({required IconData icon, required VoidCallback onTap, required Color color}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 32.w,
-        height: 32.h,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8.r),
-        ),
+        width: 32.w, height: 32.h,
+        decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8.r)),
         child: Icon(icon, color: color, size: 18.sp),
       ),
     );

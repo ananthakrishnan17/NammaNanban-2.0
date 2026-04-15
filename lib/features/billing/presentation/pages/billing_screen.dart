@@ -14,9 +14,7 @@ import '../widgets/payment_bottom_sheet.dart';
 
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});
-
-  @override
-  State<BillingScreen> createState() => _BillingScreenState();
+  @override State<BillingScreen> createState() => _BillingScreenState();
 }
 
 class _BillingScreenState extends State<BillingScreen> {
@@ -24,11 +22,21 @@ class _BillingScreenState extends State<BillingScreen> {
   int? _selectedCategoryId;
   bool _showCart = false;
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
+  @override void dispose() { _searchController.dispose(); super.dispose(); }
+
+  // ── Helper: Product → CartItem ─────────────────────────────────────────────
+  CartItem _toCartItem(Product p) => CartItem(
+    productId: p.id!,
+    productName: p.name,
+    unit: p.displayUnit,
+    sellingPrice: p.sellingPrice,
+    wholesalePrice: p.wholesalePrice > 0 ? p.wholesalePrice : p.sellingPrice,
+    purchasePrice: p.purchasePrice,
+    gstRate: p.gstRate,
+    gstInclusive: p.gstInclusive,
+    rateType: p.rateType,
+    quantity: 1,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -37,26 +45,26 @@ class _BillingScreenState extends State<BillingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(),
-            Expanded(
-              child: _showCart ? _buildCartView() : _buildProductView(),
-            ),
+            _buildTopBar(),
+            // ✅ Bill Type Toggle — always visible below search
+            _buildBillTypeToggle(),
+            Expanded(child: _showCart ? _buildCartView() : _buildProductView()),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHeader() {
+  // ── Top Bar: Search + Cart button ─────────────────────────────────────────
+  Widget _buildTopBar() {
     return BlocBuilder<BillingBloc, CartState>(
       builder: (context, state) {
         final cart = state as CartState;
         return Container(
           color: Colors.white,
-          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 10.h),
+          padding: EdgeInsets.fromLTRB(16.w, 10.h, 16.w, 6.h),
           child: Row(
             children: [
-              // Search
               Expanded(
                 child: Container(
                   height: 44.h,
@@ -71,6 +79,15 @@ class _BillingScreenState extends State<BillingScreen> {
                     decoration: InputDecoration(
                       hintText: 'Search products...',
                       prefixIcon: Icon(Icons.search, color: AppTheme.textSecondary, size: 20.sp),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                        icon: Icon(Icons.clear, size: 18.sp, color: AppTheme.textSecondary),
+                        onPressed: () {
+                          _searchController.clear();
+                          context.read<ProductBloc>().add(SearchProducts(''));
+                        },
+                      )
+                          : null,
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(vertical: 12.h),
                       hintStyle: AppTheme.caption,
@@ -79,13 +96,12 @@ class _BillingScreenState extends State<BillingScreen> {
                   ),
                 ),
               ),
-              SizedBox(width: 12.w),
-              // Cart Button
+              SizedBox(width: 10.w),
+              // Cart button with item count badge
               GestureDetector(
                 onTap: () => setState(() => _showCart = !_showCart),
                 child: Container(
-                  width: 50.w,
-                  height: 44.h,
+                  width: 50.w, height: 44.h,
                   decoration: BoxDecoration(
                     color: _showCart ? AppTheme.primary : AppTheme.primary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12.r),
@@ -93,18 +109,13 @@ class _BillingScreenState extends State<BillingScreen> {
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      Icon(
-                        Icons.shopping_cart_rounded,
-                        color: _showCart ? Colors.white : AppTheme.primary,
-                        size: 22.sp,
-                      ),
+                      Icon(Icons.shopping_cart_rounded,
+                          color: _showCart ? Colors.white : AppTheme.primary, size: 22.sp),
                       if (cart.itemCount > 0)
                         Positioned(
-                          top: 6.h,
-                          right: 6.w,
+                          top: 6.h, right: 6.w,
                           child: Container(
-                            width: 16.w,
-                            height: 16.w,
+                            width: 16.w, height: 16.w,
                             decoration: BoxDecoration(
                               color: _showCart ? Colors.white : AppTheme.danger,
                               shape: BoxShape.circle,
@@ -113,8 +124,7 @@ class _BillingScreenState extends State<BillingScreen> {
                               child: Text(
                                 cart.itemCount > 9 ? '9+' : '${cart.itemCount}',
                                 style: TextStyle(
-                                  fontSize: 9.sp,
-                                  fontWeight: FontWeight.w700,
+                                  fontSize: 9.sp, fontWeight: FontWeight.w700,
                                   color: _showCart ? AppTheme.danger : Colors.white,
                                 ),
                               ),
@@ -132,84 +142,178 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
-  Widget _buildProductView() {
-    return BlocBuilder<ProductBloc, ProductState>(
-      builder: (context, productState) {
-        if (productState is ProductLoading) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (productState is ProductsLoaded) {
-          return Column(
-            children: [
-              // Category Filter
-              _buildCategoryFilter(productState.categories),
-              // Product Grid
-              Expanded(
-                child: productState.filteredProducts.isEmpty
-                    ? _buildEmptyState()
-                    : GridView.builder(
-                  padding: EdgeInsets.all(12.w),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    mainAxisSpacing: 10.h,
-                    crossAxisSpacing: 10.w,
-                    childAspectRatio: 0.82,
-                  ),
-                  itemCount: productState.filteredProducts.length,
-                  itemBuilder: (context, index) {
-                    final product = productState.filteredProducts[index];
-                    return ProductGridItem(
-                      product: product,
-                      onTap: () {
-                        if (!product.isOutOfStock) {
-                          context.read<BillingBloc>().add(AddToCart(
-                            CartItem(
-                              // Use ! because product.id from the database won't be null here
-                              productId: product.id!,
-                              productName: product.name,
-                              unit: product.unit,
-                              quantity: 1,
-                              sellingPrice: product.sellingPrice,
-                              wholesalePrice: product.wholesalePrice,
-                              purchasePrice: product.purchasePrice, // Added this
-                              // If "product: product" gave an error, just remove it.
-                              // Your CartItem likely uses the individual fields above instead.
+  // ── ✅ Bill Type Toggle: Retail / Wholesale ───────────────────────────────
+  Widget _buildBillTypeToggle() {
+    return BlocBuilder<BillingBloc, CartState>(
+      builder: (context, state) {
+        final cart = state as CartState;
+        final isRetail = cart.billType == BillType.retail;
+
+        return Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 10.h),
+          child: Container(
+            height: 38.h,
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(10.r),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Row(
+              children: [
+                // Retail tab
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (!isRetail) {
+                        context.read<BillingBloc>().add(SetBillType(BillType.retail));
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: EdgeInsets.all(3.w),
+                      decoration: BoxDecoration(
+                        color: isRetail ? AppTheme.primary : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7.r),
+                        boxShadow: isRetail
+                            ? [BoxShadow(color: AppTheme.primary.withOpacity(0.25), blurRadius: 6, offset: const Offset(0, 2))]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('🛒', style: TextStyle(fontSize: 13.sp)),
+                          SizedBox(width: 5.w),
+                          Text(
+                            'Retail',
+                            style: TextStyle(
+                              fontSize: 13.sp,
+                              fontWeight: FontWeight.w600,
+                              color: isRetail ? Colors.white : AppTheme.textSecondary,
+                              fontFamily: 'Poppins',
                             ),
-                          ));
-                          _showAddedFeedback(product.name);
-                        } else {
-                          _showOutOfStockDialog(product.name);
-                        }
-                      },
-                    );
-                  },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              // Bottom Total Bar
-              _buildBottomBar(),
-            ],
-          );
-        }
-        return const SizedBox();
+                // Wholesale tab
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (isRetail) {
+                        context.read<BillingBloc>().add(SetBillType(BillType.wholesale));
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: EdgeInsets.all(3.w),
+                      decoration: BoxDecoration(
+                        color: !isRetail ? const Color(0xFF2D3250) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7.r),
+                        boxShadow: !isRetail
+                            ? [BoxShadow(color: const Color(0xFF2D3250).withOpacity(0.25), blurRadius: 6, offset: const Offset(0, 2))]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('📦', style: TextStyle(fontSize: 13.sp)),
+                          SizedBox(width: 5.w),
+                          Text(
+                            'Wholesale',
+                            style: TextStyle(
+                              fontSize: 13.sp,
+                              fontWeight: FontWeight.w600,
+                              color: !isRetail ? Colors.white : AppTheme.textSecondary,
+                              fontFamily: 'Poppins',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
       },
     );
   }
 
+  // ── Product Grid view ─────────────────────────────────────────────────────
+  Widget _buildProductView() {
+    return BlocBuilder<BillingBloc, CartState>(
+      builder: (ctx, billingState) {
+        final billType = (billingState as CartState).billType;
+        return BlocBuilder<ProductBloc, ProductState>(
+          builder: (context, productState) {
+            if (productState is ProductLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (productState is! ProductsLoaded) return const SizedBox();
+
+            return Column(
+              children: [
+                _buildCategoryFilter(productState.categories),
+                Expanded(
+                  child: productState.filteredProducts.isEmpty
+                      ? _buildEmptyState()
+                      : GridView.builder(
+                    padding: EdgeInsets.all(12.w),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 10.h,
+                      crossAxisSpacing: 10.w,
+                      childAspectRatio: 0.82,
+                    ),
+                    itemCount: productState.filteredProducts.length,
+                    itemBuilder: (context, index) {
+                      final product = productState.filteredProducts[index];
+                      // ✅ Pass billType so grid shows correct price
+                      return ProductGridItem(
+                        product: product,
+                        billType: billType,
+                        onTap: () {
+                          if (!product.isOutOfStock) {
+                            // ✅ Convert Product → CartItem properly
+                            context.read<BillingBloc>().add(AddToCart(_toCartItem(product)));
+                            _showAddedFeedback(product.name);
+                          } else {
+                            _showOutOfStockSnack(product.name);
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+                _buildBottomBar(),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Category filter chips ─────────────────────────────────────────────────
   Widget _buildCategoryFilter(List<Category> categories) {
     return SizedBox(
-      height: 44.h,
+      height: 40.h,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.symmetric(horizontal: 12.w),
         children: [
-          _buildCategoryChip(null, '🏪', 'All'),
-          ...categories.map((c) => _buildCategoryChip(c.id, c.icon, c.name)),
+          _categoryChip(null, '🏪', 'All'),
+          ...categories.map((c) => _categoryChip(c.id, c.icon, c.name)),
         ],
       ),
     );
   }
 
-  Widget _buildCategoryChip(int? id, String icon, String label) {
+  Widget _categoryChip(int? id, String icon, String label) {
     final isSelected = _selectedCategoryId == id;
     return GestureDetector(
       onTap: () {
@@ -217,36 +321,30 @@ class _BillingScreenState extends State<BillingScreen> {
         context.read<ProductBloc>().add(FilterByCategory(id));
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 180),
         margin: EdgeInsets.only(right: 8.w),
-        padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+        padding: EdgeInsets.symmetric(horizontal: 11.w, vertical: 5.h),
         decoration: BoxDecoration(
           color: isSelected ? AppTheme.primary : Colors.white,
           borderRadius: BorderRadius.circular(20.r),
-          border: Border.all(
-            color: isSelected ? AppTheme.primary : AppTheme.divider,
-          ),
+          border: Border.all(color: isSelected ? AppTheme.primary : AppTheme.divider),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(icon, style: TextStyle(fontSize: 14.sp)),
+            Text(icon, style: TextStyle(fontSize: 13.sp)),
             SizedBox(width: 4.w),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w500,
-                color: isSelected ? Colors.white : AppTheme.textPrimary,
-                fontFamily: 'Poppins',
-              ),
-            ),
+            Text(label, style: TextStyle(
+              fontSize: 12.sp, fontWeight: FontWeight.w500,
+              color: isSelected ? Colors.white : AppTheme.textPrimary, fontFamily: 'Poppins',
+            )),
           ],
         ),
       ),
     );
   }
 
+  // ── Cart View ─────────────────────────────────────────────────────────────
   Widget _buildCartView() {
     return BlocConsumer<BillingBloc, CartState>(
       listener: (context, state) {
@@ -257,43 +355,30 @@ class _BillingScreenState extends State<BillingScreen> {
       },
       builder: (context, state) {
         final cart = state as CartState;
-        if (cart.isEmpty) {
-          return Column(
-            children: [
-              Expanded(child: _buildEmptyCart()),
-              _buildBottomBar(),
-            ],
-          );
-        }
         return Column(
           children: [
-            Expanded(
-              child: ListView.separated(
-                padding: EdgeInsets.all(12.w),
-                itemCount: cart.items.length,
-                separatorBuilder: (_, __) => SizedBox(height: 8.h),
-                itemBuilder: (context, index) {
-                  return CartItemTile(
-                    item: cart.items[index],
-                    onIncrease: () => context.read<BillingBloc>().add(
-                      UpdateCartItemQty(
-                        productId: cart.items[index].productId!,
-                        quantity: cart.items[index].quantity + 1,
-                      ),
-                    ),
-                    onDecrease: () => context.read<BillingBloc>().add(
-                      UpdateCartItemQty(
-                        productId: cart.items[index].productId!,
-                        quantity: cart.items[index].quantity - 1,
-                      ),
-                    ),
-                    onRemove: () => context.read<BillingBloc>().add(
-                      RemoveFromCart(cart.items[index].productId!),
-                    ),
-                  );
-                },
+            if (cart.isEmpty)
+              Expanded(child: _buildEmptyCart())
+            else
+              Expanded(
+                child: ListView.separated(
+                  padding: EdgeInsets.all(12.w),
+                  itemCount: cart.items.length,
+                  separatorBuilder: (_, __) => SizedBox(height: 8.h),
+                  itemBuilder: (context, i) {
+                    final item = cart.items[i];
+                    return CartItemTile(
+                      item: item,
+                      billType: cart.billType,
+                      onIncrease: () => context.read<BillingBloc>().add(
+                          UpdateCartItemQty(productId: item.productId, quantity: item.quantity + 1)),
+                      onDecrease: () => context.read<BillingBloc>().add(
+                          UpdateCartItemQty(productId: item.productId, quantity: item.quantity - 1)),
+                      onRemove: () => context.read<BillingBloc>().add(RemoveFromCart(item.productId)),
+                    );
+                  },
+                ),
               ),
-            ),
             _buildCartSummary(cart),
           ],
         );
@@ -301,22 +386,41 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  // ── Cart summary + Pay button ─────────────────────────────────────────────
   Widget _buildCartSummary(CartState cart) {
     return Container(
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 12,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, -4))],
       ),
       child: Column(
         children: [
+          // Bill type indicator
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 3.h),
+                decoration: BoxDecoration(
+                  color: cart.billType == BillType.retail
+                      ? AppTheme.primary.withOpacity(0.1)
+                      : AppTheme.secondary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6.r),
+                ),
+                child: Text(
+                  cart.billType == BillType.retail ? '🛒 Retail Bill' : '📦 Wholesale Bill',
+                  style: TextStyle(
+                    fontSize: 11.sp, fontWeight: FontWeight.w600, fontFamily: 'Poppins',
+                    color: cart.billType == BillType.retail ? AppTheme.primary : AppTheme.secondary,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text('${cart.items.length} item${cart.items.length == 1 ? '' : 's'}', style: AppTheme.caption),
+            ],
+          ),
+          SizedBox(height: 10.h),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -324,8 +428,18 @@ class _BillingScreenState extends State<BillingScreen> {
               Text(CurrencyFormatter.format(cart.subtotal), style: AppTheme.body),
             ],
           ),
+          if (cart.gstTotal > 0) ...[
+            SizedBox(height: 3.h),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('GST', style: AppTheme.body.copyWith(color: AppTheme.textSecondary)),
+                Text(CurrencyFormatter.format(cart.gstTotal), style: AppTheme.body),
+              ],
+            ),
+          ],
           if (cart.discountAmount > 0) ...[
-            SizedBox(height: 4.h),
+            SizedBox(height: 3.h),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -335,7 +449,7 @@ class _BillingScreenState extends State<BillingScreen> {
               ],
             ),
           ],
-          Divider(height: 16.h, color: AppTheme.divider),
+          Divider(height: 14.h, color: AppTheme.divider),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -380,21 +494,26 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  // ── Bottom floating cart bar ───────────────────────────────────────────────
   Widget _buildBottomBar() {
     return BlocBuilder<BillingBloc, CartState>(
       builder: (context, state) {
         final cart = state as CartState;
         if (cart.isEmpty) return const SizedBox();
+        final isWholesale = cart.billType == BillType.wholesale;
         return GestureDetector(
           onTap: () => setState(() => _showCart = true),
           child: Container(
             margin: EdgeInsets.all(12.w),
             padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
             decoration: BoxDecoration(
-              color: AppTheme.primary,
+              color: isWholesale ? AppTheme.secondary : AppTheme.primary,
               borderRadius: BorderRadius.circular(14.r),
               boxShadow: [
-                BoxShadow(color: AppTheme.primary.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4)),
+                BoxShadow(
+                  color: (isWholesale ? AppTheme.secondary : AppTheme.primary).withOpacity(0.35),
+                  blurRadius: 12, offset: const Offset(0, 4),
+                ),
               ],
             ),
             child: Row(
@@ -402,24 +521,23 @@ class _BillingScreenState extends State<BillingScreen> {
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 3.h),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withOpacity(0.25),
                     borderRadius: BorderRadius.circular(8.r),
                   ),
                   child: Text(
                     '${cart.itemCount} items',
-                    style: TextStyle(color: Colors.white, fontSize: 12.sp, fontWeight: FontWeight.w600),
+                    style: TextStyle(color: Colors.white, fontSize: 12.sp, fontWeight: FontWeight.w600, fontFamily: 'Poppins'),
                   ),
                 ),
                 SizedBox(width: 8.w),
-                Expanded(
-                  child: Text(
-                    'View Cart',
-                    style: TextStyle(color: Colors.white, fontSize: 15.sp, fontWeight: FontWeight.w600),
-                  ),
+                Text(
+                  isWholesale ? '📦 View Cart' : '🛒 View Cart',
+                  style: TextStyle(color: Colors.white, fontSize: 14.sp, fontWeight: FontWeight.w600, fontFamily: 'Poppins'),
                 ),
+                const Spacer(),
                 Text(
                   CurrencyFormatter.format(cart.subtotal),
-                  style: TextStyle(color: Colors.white, fontSize: 16.sp, fontWeight: FontWeight.w700),
+                  style: TextStyle(color: Colors.white, fontSize: 16.sp, fontWeight: FontWeight.w700, fontFamily: 'Poppins'),
                 ),
                 Icon(Icons.chevron_right, color: Colors.white, size: 20.sp),
               ],
@@ -430,66 +548,52 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('🔍', style: TextStyle(fontSize: 48.sp)),
-          SizedBox(height: 12.h),
-          Text('No products found', style: AppTheme.heading3),
-          SizedBox(height: 4.h),
-          Text('Try a different search or category', style: AppTheme.caption),
-        ],
-      ),
-    );
-  }
+  Widget _buildEmptyState() => Center(
+    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Text('🔍', style: TextStyle(fontSize: 48.sp)),
+      SizedBox(height: 12.h),
+      Text('No products found', style: AppTheme.heading3),
+      SizedBox(height: 4.h),
+      Text('Try a different search or category', style: AppTheme.caption),
+    ]),
+  );
 
-  Widget _buildEmptyCart() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('🛒', style: TextStyle(fontSize: 56.sp)),
-          SizedBox(height: 16.h),
-          Text('Cart is empty', style: AppTheme.heading2),
-          SizedBox(height: 8.h),
-          Text('Tap products to add them to cart', style: AppTheme.caption),
-          SizedBox(height: 20.h),
-          TextButton.icon(
-            onPressed: () => setState(() => _showCart = false),
-            icon: const Icon(Icons.grid_view_rounded),
-            label: const Text('Browse Products'),
-          ),
-        ],
+  Widget _buildEmptyCart() => Center(
+    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Text('🛒', style: TextStyle(fontSize: 56.sp)),
+      SizedBox(height: 16.h),
+      Text('Cart is empty', style: AppTheme.heading2),
+      SizedBox(height: 8.h),
+      Text('Tap products to add them to cart', style: AppTheme.caption),
+      SizedBox(height: 20.h),
+      TextButton.icon(
+        onPressed: () => setState(() => _showCart = false),
+        icon: const Icon(Icons.grid_view_rounded),
+        label: const Text('Browse Products'),
       ),
-    );
-  }
+    ]),
+  );
 
-  void _showAddedFeedback(String productName) {
+  void _showAddedFeedback(String name) {
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$productName added to cart'),
-        duration: const Duration(milliseconds: 800),
-        backgroundColor: AppTheme.accent,
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('$name added'),
+      duration: const Duration(milliseconds: 700),
+      backgroundColor: AppTheme.accent,
+      behavior: SnackBarBehavior.floating,
+      margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+    ));
   }
 
-  void _showOutOfStockDialog(String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$name is out of stock'),
-        backgroundColor: AppTheme.danger,
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
-      ),
-    );
+  void _showOutOfStockSnack(String name) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('$name — Out of stock'),
+      backgroundColor: AppTheme.danger,
+      behavior: SnackBarBehavior.floating,
+      margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+    ));
   }
 
   void _showPaymentSheet(BuildContext context, CartState cart) {

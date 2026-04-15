@@ -18,6 +18,7 @@ import 'features/sales/presentation/bloc/sales_bloc.dart';
 import 'features/auth/presentation/pages/login_screen.dart';
 import 'features/setup/presentation/pages/setup_page.dart';
 import 'features/shell/presentation/pages/main_shell.dart';
+import 'features/users/domain/entities/app_user.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +53,7 @@ class ShopPOSApp extends StatelessWidget {
             BlocProvider(create: (_) => di.sl<MastersBloc>()..add(LoadAllMasters())),
             BlocProvider(create: (_) => di.sl<PurchaseBloc>()..add(LoadPurchases())),
             BlocProvider(create: (_) => di.sl<HeldBillBloc>()..add(LoadHeldBills())),
+            BlocProvider(create: (_) => di.sl<UserBloc>()),
           ],
           child: ListenableBuilder(
             listenable: AppLocalizations.instance,

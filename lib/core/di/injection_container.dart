@@ -1,4 +1,5 @@
 import 'package:get_it/get_it.dart';
+import '../../features/users/domain/entities/app_user.dart';
 import '../database/database_helper.dart';
 import '../../features/billing/data/repositories/billing_repository_impl.dart';
 import '../../features/billing/presentation/bloc/billing_bloc.dart';
@@ -26,6 +27,7 @@ Future<void> init() async {
   sl.registerLazySingleton<MastersRepository>(() => MastersRepositoryImpl(sl()));
   sl.registerLazySingleton(() => PurchaseRepository(sl()));
   sl.registerLazySingleton(() => HeldBillRepository(sl()));
+  sl.registerLazySingleton<UserRepository>(() => UserRepository(sl()));
 
   // BLoCs
   sl.registerFactory(() => ProductBloc(sl()));
@@ -35,4 +37,6 @@ Future<void> init() async {
   sl.registerFactory(() => MastersBloc(sl()));
   sl.registerFactory(() => PurchaseBloc(sl()));
   sl.registerFactory(() => HeldBillBloc(sl()));
+  sl.registerFactory(() => UserBloc(sl()));
+
 }
