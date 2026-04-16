@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
-import '../../../products/presentation/bloc/product_bloc.dart';
-import '../../../printer/services/printer_service.dart';
-import '../bloc/billing_bloc.dart';
 import '../../domain/entities/bill.dart';
+import '../bloc/billing_bloc.dart';
 
 class PaymentBottomSheet extends StatefulWidget {
   final CartState cart;
@@ -17,252 +16,285 @@ class PaymentBottomSheet extends StatefulWidget {
 }
 
 class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
-  String _selectedMode = 'cash';
-  double _cashGiven = 0;
-  bool _printBill = true;
-  bool _isSaving = false;
-
-  final List<Map<String, String>> _paymentModes = [
-    {'mode': 'cash', 'label': 'Cash', 'icon': '💵'},
-    {'mode': 'upi', 'label': 'UPI', 'icon': '📱'},
-    {'mode': 'card', 'label': 'Card', 'icon': '💳'},
-  ];
+  late String _selectedMode;
+  final TextEditingController _discountController = TextEditingController();
+  final TextEditingController _customerController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _cashGiven = widget.cart.totalAmount;
+    _selectedMode = widget.cart.paymentMode;
+    _discountController.text = widget.cart.discountAmount > 0
+        ? widget.cart.discountAmount.toStringAsFixed(2)
+        : '';
+    _customerController.text = widget.cart.customerName ?? '';
+  }
+
+  @override
+  void dispose() {
+    _discountController.dispose();
+    _customerController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.cart.totalAmount;
-    final change = _cashGiven - total;
-
-    return BlocListener<BillingBloc, CartState>(
+    return BlocConsumer<BillingBloc, CartState>(
+      // ✅ FIX: Close the sheet the moment save finishes (isSaving flips false + bill set)
+      //         Without this the sheet stays open forever showing a spinner.
+      listenWhen: (prev, curr) =>
+      prev.isSaving == true &&
+          curr.isSaving == false,
       listener: (context, state) {
-        final cart = state as CartState;
-        if (cart.lastSavedBill != null && !_isSaving) {
-          Navigator.pop(context);
-          if (_printBill) {
-            PrinterService.instance.printBill(cart.lastSavedBill!);
-          }
-          _showSuccessDialog(context, cart.lastSavedBill!);
-        }
+        // Close sheet regardless of success/failure — errors shown by BillingScreen
+        Navigator.of(context).pop();
       },
-      child: Container(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-        ),
-        child: SingleChildScrollView(
-          padding: EdgeInsets.all(20.w),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40.w, height: 4.h,
-                  decoration: BoxDecoration(
-                    color: AppTheme.divider,
-                    borderRadius: BorderRadius.circular(2.r),
+      builder: (context, state) {
+        final cart = state as CartState;
+        final isSaving = cart.isSaving;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+          ),
+          padding: EdgeInsets.only(
+            left: 20.w,
+            right: 20.w,
+            top: 20.h,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24.h,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Handle bar
+                Center(
+                  child: Container(
+                    width: 40.w,
+                    height: 4.h,
+                    decoration: BoxDecoration(
+                      color: AppTheme.divider,
+                      borderRadius: BorderRadius.circular(2.r),
+                    ),
                   ),
                 ),
-              ),
-              SizedBox(height: 16.h),
+                SizedBox(height: 16.h),
 
-              Text('Complete Payment', style: AppTheme.heading2),
-              SizedBox(height: 4.h),
-              Text('${widget.cart.items.length} items', style: AppTheme.caption),
-              SizedBox(height: 20.h),
-
-              // Total Amount
-              Container(
-                width: double.infinity,
-                padding: EdgeInsets.all(16.w),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(14.r),
+                Text('Confirm Payment', style: AppTheme.heading2),
+                SizedBox(height: 4.h),
+                Text(
+                  cart.billType == BillType.retail
+                      ? '🛒 Retail Bill'
+                      : '📦 Wholesale Bill',
+                  style:
+                  AppTheme.caption.copyWith(color: AppTheme.textSecondary),
                 ),
-                child: Column(
-                  children: [
-                    Text('Total Amount', style: AppTheme.caption),
-                    SizedBox(height: 4.h),
-                    Text(
-                      CurrencyFormatter.format(total),
-                      style: TextStyle(
-                        fontSize: 32.sp,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.primary,
-                        fontFamily: 'Poppins',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: 20.h),
+                SizedBox(height: 20.h),
 
-              // Payment Mode
-              Text('Payment Mode', style: AppTheme.heading3),
-              SizedBox(height: 10.h),
-              Row(
-                children: _paymentModes.map((mode) {
-                  final isSelected = _selectedMode == mode['mode'];
-                  return Expanded(
-                    child: GestureDetector(
-                      onTap: () => setState(() => _selectedMode = mode['mode']!),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        margin: EdgeInsets.only(right: 8.w),
-                        padding: EdgeInsets.symmetric(vertical: 12.h),
-                        decoration: BoxDecoration(
-                          color: isSelected ? AppTheme.primary : AppTheme.surface,
-                          borderRadius: BorderRadius.circular(12.r),
-                          border: Border.all(
-                            color: isSelected ? AppTheme.primary : AppTheme.divider,
+                // ── Customer Name (optional) ────────────────────────────────
+                Text('Customer Name (optional)', style: AppTheme.caption),
+                SizedBox(height: 6.h),
+                TextField(
+                  controller: _customerController,
+                  onChanged: (v) =>
+                      context.read<BillingBloc>().add(SetCustomerName(v)),
+                  decoration: InputDecoration(
+                    hintText: 'Walk-in customer',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.r)),
+                    contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12.w, vertical: 10.h),
+                    isDense: true,
+                  ),
+                ),
+                SizedBox(height: 16.h),
+
+                // ── Discount ───────────────────────────────────────────────
+                Text('Discount Amount', style: AppTheme.caption),
+                SizedBox(height: 6.h),
+                TextField(
+                  controller: _discountController,
+                  keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (v) {
+                    final d = double.tryParse(v) ?? 0.0;
+                    context.read<BillingBloc>().add(ApplyDiscount(d));
+                  },
+                  decoration: InputDecoration(
+                    hintText: '0.00',
+                    prefixText: '₹ ',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.r)),
+                    contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12.w, vertical: 10.h),
+                    isDense: true,
+                  ),
+                ),
+                SizedBox(height: 16.h),
+
+                // ── Payment Mode ───────────────────────────────────────────
+                Text('Payment Mode', style: AppTheme.caption),
+                SizedBox(height: 8.h),
+                Row(
+                  children: PaymentMode.values.map((mode) {
+                    final isSelected = _selectedMode == mode.name;
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() => _selectedMode = mode.name);
+                          context
+                              .read<BillingBloc>()
+                              .add(SetPaymentMode(mode.name));
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          margin: EdgeInsets.only(right: 6.w),
+                          padding: EdgeInsets.symmetric(
+                              vertical: 10.h, horizontal: 4.w),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppTheme.primary.withOpacity(0.12)
+                                : AppTheme.surface,
+                            borderRadius: BorderRadius.circular(10.r),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppTheme.primary
+                                  : AppTheme.divider,
+                              width: isSelected ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(mode.icon,
+                                  style: TextStyle(fontSize: 18.sp)),
+                              SizedBox(height: 3.h),
+                              Text(
+                                mode.label,
+                                style: TextStyle(
+                                  fontSize: 10.sp,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: isSelected
+                                      ? AppTheme.primary
+                                      : AppTheme.textSecondary,
+                                  fontFamily: 'Poppins',
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: Column(
-                          children: [
-                            Text(mode['icon']!, style: TextStyle(fontSize: 20.sp)),
-                            SizedBox(height: 4.h),
-                            Text(
-                              mode['label']!,
-                              style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.w600,
-                                color: isSelected ? Colors.white : AppTheme.textPrimary,
-                                fontFamily: 'Poppins',
-                              ),
-                            ),
-                          ],
-                        ),
                       ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              SizedBox(height: 16.h),
-
-              // Cash given and change (only for cash)
-              if (_selectedMode == 'cash') ...[
-                Text('Cash Given', style: AppTheme.heading3),
-                SizedBox(height: 8.h),
-                // Quick cash buttons
-                Wrap(
-                  spacing: 8.w,
-                  children: [10, 20, 50, 100, 200, 500].map((amount) {
-                    return ActionChip(
-                      label: Text('₹$amount'),
-                      onPressed: () => setState(() => _cashGiven = amount.toDouble()),
-                      backgroundColor: _cashGiven == amount.toDouble()
-                          ? AppTheme.primary.withOpacity(0.15)
-                          : AppTheme.surface,
                     );
                   }).toList(),
                 ),
-                SizedBox(height: 8.h),
-                TextField(
-                  keyboardType: TextInputType.number,
-                  onChanged: (v) => setState(() => _cashGiven = double.tryParse(v) ?? 0),
-                  decoration: const InputDecoration(
-                    hintText: 'Enter cash amount',
-                    prefixText: '₹ ',
+                SizedBox(height: 20.h),
+
+                // ── Total Summary ──────────────────────────────────────────
+                Container(
+                  padding: EdgeInsets.all(14.w),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(12.r),
+                    border: Border.all(color: AppTheme.divider),
                   ),
-                  controller: TextEditingController(text: _cashGiven.toStringAsFixed(0)),
-                ),
-                if (_cashGiven >= total) ...[
-                  SizedBox(height: 12.h),
-                  Container(
-                    padding: EdgeInsets.all(12.w),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10.r),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Change to Return', style: AppTheme.body),
-                        Text(
-                          CurrencyFormatter.format(change),
-                          style: TextStyle(
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.accent,
-                            fontFamily: 'Poppins',
-                          ),
+                  child: Column(
+                    children: [
+                      _summaryRow('Subtotal',
+                          CurrencyFormatter.format(cart.subtotal)),
+                      if (cart.gstTotal > 0) ...[
+                        SizedBox(height: 4.h),
+                        _summaryRow(
+                            'GST', CurrencyFormatter.format(cart.gstTotal)),
+                      ],
+                      if (cart.discountAmount > 0) ...[
+                        SizedBox(height: 4.h),
+                        _summaryRow(
+                          'Discount',
+                          '-${CurrencyFormatter.format(cart.discountAmount)}',
+                          valueColor: AppTheme.accent,
                         ),
                       ],
+                      Divider(height: 14.h, color: AppTheme.divider),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Total Payable', style: AppTheme.heading3),
+                          Text(
+                            CurrencyFormatter.format(cart.totalAmount),
+                            style: AppTheme.price,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 20.h),
+
+                // ── Confirm Button ─────────────────────────────────────────
+                SizedBox(
+                  width: double.infinity,
+                  height: 52.h,
+                  child: ElevatedButton(
+                    // ✅ Disable while saving to prevent double-tap
+                    onPressed: isSaving
+                        ? null
+                        : () {
+                      context.read<BillingBloc>().add(SaveBill());
+                    },
+                    style: ElevatedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14.r)),
+                    ),
+                    child: isSaving
+                        ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 20.w,
+                          height: 20.h,
+                          child: const CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        ),
+                        SizedBox(width: 10.w),
+                        Text(
+                          'Saving...',
+                          style: TextStyle(
+                              fontSize: 16.sp,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                              fontFamily: 'Poppins'),
+                        ),
+                      ],
+                    )
+                        : Text(
+                      'Confirm & Pay ${CurrencyFormatter.format(cart.totalAmount)}',
+                      style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Poppins'),
                     ),
                   ),
-                ],
-                SizedBox(height: 16.h),
+                ),
               ],
-
-              // Print option
-              Row(
-                children: [
-                  Checkbox(
-                    value: _printBill,
-                    onChanged: (v) => setState(() => _printBill = v ?? true),
-                    activeColor: AppTheme.primary,
-                  ),
-                  Text('Print Bill', style: AppTheme.body),
-                  SizedBox(width: 8.w),
-                  Icon(Icons.print, size: 16.sp, color: AppTheme.textSecondary),
-                ],
-              ),
-              SizedBox(height: 16.h),
-
-              // Confirm Button
-              ElevatedButton(
-                onPressed: _isSaving ? null : _confirmPayment,
-                child: _isSaving
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text('Confirm Payment - ${CurrencyFormatter.format(total)}'),
-              ),
-              SizedBox(height: 8.h),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _confirmPayment() {
-    setState(() => _isSaving = true);
-    context.read<BillingBloc>().add(SetPaymentMode(_selectedMode));
-    context.read<BillingBloc>().add(
-      SaveBill(),
-    );
-  }
-
-  void _showSuccessDialog(BuildContext context, Bill bill) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20.r)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.check_circle, color: AppTheme.accent, size: 60),
-            SizedBox(height: 12.h),
-            Text('Payment Successful!', style: AppTheme.heading2),
-            SizedBox(height: 4.h),
-            Text('Bill #${bill.billNumber}', style: AppTheme.caption),
-            SizedBox(height: 8.h),
-            Text(
-              CurrencyFormatter.format(bill.totalAmount),
-              style: AppTheme.price.copyWith(fontSize: 24.sp),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
-        ],
-      ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _summaryRow(String label, String value, {Color? valueColor}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: AppTheme.body.copyWith(color: AppTheme.textSecondary)),
+        Text(value,
+            style: AppTheme.body.copyWith(color: valueColor)),
+      ],
     );
   }
 }
