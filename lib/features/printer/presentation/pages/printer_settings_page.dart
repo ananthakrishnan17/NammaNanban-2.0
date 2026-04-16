@@ -35,16 +35,30 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
     });
   }
 
-  Future<void> _connect(BluetoothDevice device) async {
-    setState(() { _isConnecting = true; _statusMsg = 'Connecting to ${device.name}...'; });
-    final success = await PrinterService.instance.connectDevice(device);
-    setState(() {
-      _isConnecting = false;
-      _selectedDevice = success ? device : null;
-      _statusMsg = success ? 'Connected to ${device.name}!' : 'Failed to connect. Try again.';
-    });
-  }
+Future<void> _connect(BluetoothDevice device) async {
+  // 🔥 ADD THIS BLOCK
+  await [
+    Permission.bluetooth,
+    Permission.bluetoothConnect,
+    Permission.bluetoothScan,
+    Permission.location
+  ].request();
 
+  setState(() { 
+    _isConnecting = true; 
+    _statusMsg = 'Connecting to ${device.name}...'; 
+  });
+
+  final success = await PrinterService.instance.connectDevice(device);
+
+  setState(() {
+    _isConnecting = false;
+    _selectedDevice = success ? device : null;
+    _statusMsg = success 
+        ? 'Connected to ${device.name}!' 
+        : 'Failed to connect. Try again.';
+  });
+}
   Future<void> _testPrint() async {
     setState(() { _isPrinting = true; _statusMsg = 'Printing test page...'; });
     final success = await PrinterService.instance.testPrint();
