@@ -25,16 +25,27 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
     _scanDevices();
   }
 
-  Future<void> _scanDevices() async {
-    setState(() { _isScanning = true; _statusMsg = 'Scanning for devices...'; });
-    final devices = await PrinterService.instance.scanDevices();
-    setState(() {
-      _devices = devices;
-      _isScanning = false;
-      _statusMsg = devices.isEmpty ? 'No paired printers found. Pair your printer in Bluetooth settings first.' : '';
-    });
-  }
+Future<void> _scanDevices() async {
+  await [
+    Permission.bluetoothScan,
+    Permission.location
+  ].request();
 
+  setState(() { 
+    _isScanning = true; 
+    _statusMsg = 'Scanning for devices...'; 
+  });
+
+  final devices = await PrinterService.instance.scanDevices();
+
+  setState(() {
+    _devices = devices;
+    _isScanning = false;
+    _statusMsg = devices.isEmpty 
+        ? 'No paired printers found. Pair your printer in Bluetooth settings first.' 
+        : '';
+  });
+}
 Future<void> _connect(BluetoothDevice device) async {
   // 🔥 ADD THIS BLOCK
   await [
