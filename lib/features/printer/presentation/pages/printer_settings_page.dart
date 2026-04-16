@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../services/printer_service.dart';
-
+import 'package:permission_handler/permission_handler.dart';
 class PrinterSettingsPage extends StatefulWidget {
   const PrinterSettingsPage({super.key});
 
