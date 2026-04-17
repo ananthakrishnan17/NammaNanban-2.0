@@ -23,12 +23,13 @@ class HeldBillItem {
   final double unitPrice;
   final double purchasePrice;
   final double gstRate;
+  final bool gstInclusive;
   final double totalPrice;
 
   const HeldBillItem({this.id, required this.heldBillId, required this.productId,
     required this.productName, required this.quantity, required this.unit,
     required this.unitPrice, required this.purchasePrice,
-    this.gstRate = 0, required this.totalPrice});
+    this.gstRate = 0, this.gstInclusive = true, required this.totalPrice});
 
   factory HeldBillItem.fromMap(Map<String, dynamic> m) => HeldBillItem(
       id: m['id'], heldBillId: m['held_bill_id'], productId: m['product_id'],
@@ -36,6 +37,7 @@ class HeldBillItem {
       unit: m['unit'], unitPrice: (m['unit_price'] as num).toDouble(),
       purchasePrice: (m['purchase_price'] as num?)?.toDouble() ?? 0,
       gstRate: (m['gst_rate'] as num?)?.toDouble() ?? 0,
+      gstInclusive: (m['gst_inclusive'] as int? ?? 1) == 1,
       totalPrice: (m['total_price'] as num).toDouble());
 }
 
@@ -86,7 +88,9 @@ class HeldBillRepository {
           'product_name': item.productName, 'quantity': item.quantity,
           'unit': item.unit, 'unit_price': item.sellingPrice,
           'purchase_price': item.purchasePrice,
-          'gst_rate': item.gstRate, 'total_price': item.totalFor(cart.billType),
+          'gst_rate': item.gstRate,
+          'gst_inclusive': item.gstInclusive ? 1 : 0,
+          'total_price': item.totalFor(cart.billType),
         });
       }
       return heldId;

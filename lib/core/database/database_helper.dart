@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 3,
+    return await openDatabase(path, version: 4,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -119,7 +119,8 @@ class DatabaseHelper {
     await db.execute('''CREATE TABLE held_bill_items (id INTEGER PRIMARY KEY AUTOINCREMENT,
       held_bill_id INTEGER NOT NULL, product_id INTEGER NOT NULL, product_name TEXT NOT NULL,
       quantity REAL NOT NULL, unit TEXT NOT NULL, unit_price REAL NOT NULL,
-      purchase_price REAL DEFAULT 0.0, gst_rate REAL DEFAULT 0.0, total_price REAL NOT NULL,
+      purchase_price REAL DEFAULT 0.0, gst_rate REAL DEFAULT 0.0,
+      gst_inclusive INTEGER DEFAULT 1, total_price REAL NOT NULL,
       FOREIGN KEY (held_bill_id) REFERENCES held_bills (id) ON DELETE CASCADE)''');
 
     await db.execute('''CREATE TABLE purchases (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +210,10 @@ class DatabaseHelper {
       } catch (_) {}
       // billed_by_user_id column to bills
       try { await db.execute('ALTER TABLE bills ADD COLUMN billed_by_user_id INTEGER'); } catch (_) {}
+    }
+    if (oldVersion < 4) {
+      // gst_inclusive column to held_bill_items (preserves correct GST behaviour on restore)
+      try { await db.execute('ALTER TABLE held_bill_items ADD COLUMN gst_inclusive INTEGER DEFAULT 1'); } catch (_) {}
     }
     await _seed(db, now);
   }

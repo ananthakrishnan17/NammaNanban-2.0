@@ -1009,7 +1009,7 @@ class _BillingScreenState extends State<BillingScreen> {
                         wholesalePrice: item.unitPrice,
                         purchasePrice: item.purchasePrice,
                         gstRate: item.gstRate,
-                        gstInclusive: true,
+                        gstInclusive: item.gstInclusive,
                         rateType: 'fixed',
                         quantity: item.quantity,
                       ))
