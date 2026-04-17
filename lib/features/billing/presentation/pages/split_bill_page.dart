@@ -63,6 +63,7 @@ class _SplitBillPageState extends State<SplitBillPage> {
     // Save Bill 2 as a held bill.
     // Note: discounts are intentionally reset to 0 for each split bill.
     // The cashier can re-apply a discount when processing each bill separately.
+    // CartState.billType stores the BillType enum; holdBill() converts it to string internally.
     final bill2CartState = CartState(
       items: bill2,
       billType: widget.cart.billType,
@@ -74,7 +75,8 @@ class _SplitBillPageState extends State<SplitBillPage> {
           HoldCurrentBill(bill2CartState, holdName: '🔀 Split — Bill 2'),
         );
 
-    // Load Bill 1 into main cart (discount reset; cashier re-applies if needed)
+    // Load Bill 1 into main cart (discount reset; cashier re-applies if needed).
+    // RestoreHeldCartItems.billType accepts a String, so we convert the enum here.
     context.read<BillingBloc>().add(RestoreHeldCartItems(
           items: bill1,
           billType: widget.cart.billType.value,
