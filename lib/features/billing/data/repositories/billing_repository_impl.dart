@@ -1,4 +1,5 @@
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/utils/currency_formatter.dart';
 import '../../domain/entities/bill.dart';
 
 abstract class BillingRepository {
@@ -43,7 +44,7 @@ class BillingRepositoryImpl implements BillingRepository {
         final label = PaymentMode.values
             .firstWhere((m) => m.name == s.mode, orElse: () => PaymentMode.cash)
             .label;
-        return '$label ₹${s.amount.toStringAsFixed(s.amount % 1 == 0 ? 0 : 2)}';
+        return '$label ${CurrencyFormatter.format(s.amount)}';
       }).join(' + ');
     }
 

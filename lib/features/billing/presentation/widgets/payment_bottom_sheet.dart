@@ -51,7 +51,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
         ));
       }
     } else {
-      _splitEntries.add(_SplitEntry(mode: PaymentMode.values.first.name));
+      _splitEntries.add(_SplitEntry(mode: PaymentMode.upi.name));
       _splitEntries.add(_SplitEntry(mode: PaymentMode.cash.name));
     }
   }
@@ -70,7 +70,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
       _splitEntries.fold(0.0, (s, e) => s + e.amount);
 
   bool get _isSplitBalanced =>
-      (_splitTotal - widget.cart.totalAmount).abs() <= 1.0;
+      (_splitTotal - widget.cart.totalAmount).abs() <= 0.01;
 
   @override
   Widget build(BuildContext context) {
@@ -397,7 +397,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
                   Builder(builder: (context) {
                     final remaining =
                         cart.totalAmount - _splitTotal;
-                    final isBalanced = remaining.abs() <= 1.0;
+                    final isBalanced = remaining.abs() <= 0.01;
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [

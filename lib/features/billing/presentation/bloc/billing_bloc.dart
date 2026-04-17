@@ -82,7 +82,7 @@ class SetSplitPayments extends BillingEvent {
   final List<SplitPayment> splits;
   SetSplitPayments(this.splits);
   @override
-  List<Object?> get props => [splits.length];
+  List<Object?> get props => [splits];
 }
 
 // ✅ NEW: Used after print/dismiss to fully reset the cart
