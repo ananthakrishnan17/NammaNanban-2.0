@@ -12,6 +12,8 @@ import '../bloc/billing_bloc.dart';
 import '../widgets/cart_item_tile.dart';
 import '../widgets/product_grid_item.dart';
 import '../widgets/payment_bottom_sheet.dart';
+import 'held_bills_page.dart';
+import 'split_bill_page.dart';
 
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});
@@ -145,6 +147,64 @@ class _BillingScreenState extends State<BillingScreen> {
                 ),
               ),
               SizedBox(width: 10.w),
+              // ── Held Bills Badge ────────────────────────────────────────────
+              BlocBuilder<HeldBillBloc, HeldBillState>(
+                builder: (context, heldState) {
+                  final count = heldState.heldBills.length;
+                  return GestureDetector(
+                    onTap: () => _showHeldBillsPage(context),
+                    child: Container(
+                      width: 44.w,
+                      height: 44.h,
+                      decoration: BoxDecoration(
+                        color: count > 0
+                            ? AppTheme.warning.withOpacity(0.12)
+                            : AppTheme.surface,
+                        borderRadius: BorderRadius.circular(12.r),
+                        border: Border.all(
+                          color: count > 0
+                              ? AppTheme.warning.withOpacity(0.6)
+                              : AppTheme.divider,
+                        ),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Icon(Icons.pause_circle_outline_rounded,
+                              color: count > 0
+                                  ? AppTheme.warning
+                                  : AppTheme.textSecondary,
+                              size: 22.sp),
+                          if (count > 0)
+                            Positioned(
+                              top: 6.h,
+                              right: 5.w,
+                              child: Container(
+                                width: 15.w,
+                                height: 15.w,
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.warning,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    count > 9 ? '9+' : '$count',
+                                    style: TextStyle(
+                                      fontSize: 8.sp,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+              SizedBox(width: 8.w),
               GestureDetector(
                 onTap: () => setState(() => _showCart = !_showCart),
                 child: Container(
@@ -596,6 +656,36 @@ class _BillingScreenState extends State<BillingScreen> {
             ],
           ),
           SizedBox(height: 12.h),
+          // ── Feature Action Buttons: Hold · Edit · Split ───────────────────
+          if (!cart.isEmpty) ...[
+            Row(
+              children: [
+                _cartActionBtn(
+                  icon: Icons.pause_circle_outline_rounded,
+                  label: 'Hold',
+                  color: AppTheme.warning,
+                  onTap: () => _holdBill(context, cart),
+                ),
+                SizedBox(width: 8.w),
+                _cartActionBtn(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit',
+                  color: AppTheme.primary,
+                  onTap: () => setState(() => _showCart = false),
+                ),
+                SizedBox(width: 8.w),
+                _cartActionBtn(
+                  icon: Icons.call_split_rounded,
+                  label: 'Split',
+                  color: AppTheme.accent,
+                  onTap: cart.items.length >= 2
+                      ? () => _showSplitBillPage(context, cart)
+                      : null,
+                ),
+              ],
+            ),
+            SizedBox(height: 10.h),
+          ],
           Row(
             children: [
               Expanded(
@@ -785,5 +875,185 @@ class _BillingScreenState extends State<BillingScreen> {
         child: PaymentBottomSheet(cart: cart),
       ),
     );
+  }
+
+  // ── Cart Action Button helper ────────────────────────────────────────────
+  Widget _cartActionBtn({
+    required IconData icon,
+    required String label,
+    required Color color,
+    VoidCallback? onTap,
+  }) {
+    final active = onTap != null;
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Opacity(
+          opacity: active ? 1.0 : 0.4,
+          child: Container(
+            padding: EdgeInsets.symmetric(vertical: 8.h),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10.r),
+              border: Border.all(color: color.withOpacity(0.35)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: color, size: 20.sp),
+                SizedBox(height: 3.h),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                    fontFamily: 'Poppins',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Hold Bill ─────────────────────────────────────────────────────────────
+  void _holdBill(BuildContext context, CartState cart) {
+    final nameCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Row(children: [
+          Text('⏸️', style: TextStyle(fontSize: 22.sp)),
+          SizedBox(width: 8.w),
+          Text('Hold Bill', style: AppTheme.heading3),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Give this bill a name (optional) so you can find it later.',
+              style: AppTheme.caption,
+            ),
+            SizedBox(height: 12.h),
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'e.g., Table 3, John...',
+                prefixIcon: const Icon(Icons.label_outline),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.warning,
+              minimumSize: Size(80.w, 38.h),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              final name = nameCtrl.text.trim();
+              context.read<HeldBillBloc>().add(HoldCurrentBill(
+                    cart,
+                    holdName: name.isEmpty ? null : name,
+                  ));
+              context.read<BillingBloc>().add(ClearCart());
+              setState(() => _showCart = false);
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('⏸️ Bill held! Start a new bill.'),
+                backgroundColor: AppTheme.warning,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+                margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10.r)),
+              ));
+            },
+            child: const Text('Hold Bill'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Held Bills Page ────────────────────────────────────────────────────────
+  void _showHeldBillsPage(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: context.read<HeldBillBloc>()),
+            BlocProvider.value(value: context.read<BillingBloc>()),
+          ],
+          child: HeldBillsPage(
+            onRestore: (bill) {
+              // Convert HeldBillItems → CartItems
+              final cartItems = bill.items
+                  .map((item) => CartItem(
+                        productId: item.productId,
+                        productName: item.productName,
+                        unit: item.unit,
+                        sellingPrice: item.unitPrice,
+                        wholesalePrice: item.unitPrice,
+                        purchasePrice: item.purchasePrice,
+                        gstRate: item.gstRate,
+                        gstInclusive: true,
+                        rateType: 'fixed',
+                        quantity: item.quantity,
+                      ))
+                  .toList();
+
+              context.read<BillingBloc>().add(RestoreHeldCartItems(
+                    items: cartItems,
+                    billType: bill.billType,
+                    customerName: bill.customerName,
+                    discountAmount: bill.discountAmount,
+                  ));
+
+              // Delete the restored held bill so it's not shown twice
+              context.read<HeldBillBloc>().add(DeleteHeldBill(bill.id!));
+
+              if (mounted) setState(() => _showCart = true);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Split Bill Page ────────────────────────────────────────────────────────
+  void _showSplitBillPage(BuildContext context, CartState cart) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: context.read<BillingBloc>()),
+            BlocProvider.value(value: context.read<HeldBillBloc>()),
+          ],
+          child: SplitBillPage(cart: cart),
+        ),
+      ),
+    ).then((_) {
+      // After returning, show the cart if items exist
+      if (mounted) {
+        final currentCart = context.read<BillingBloc>().state;
+        if (!currentCart.isEmpty) {
+          setState(() => _showCart = true);
+        }
+      }
+    });
   }
 }

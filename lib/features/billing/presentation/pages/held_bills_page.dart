@@ -76,7 +76,7 @@ class HeldBillRepository {
     return await db.transaction((txn) async {
       final heldId = await txn.insert('held_bills', {
         'hold_name': holdName ?? 'Bill ${now.hour}:${now.minute.toString().padLeft(2,'0')}',
-        'bill_type': cart.billType, 'customer_id': null, 'customer_name': cart.customerName,
+        'bill_type': cart.billType.value, 'customer_id': null, 'customer_name': cart.customerName,
         'discount_amount': cart.discountAmount, 'payment_mode': cart.paymentMode,
         'created_at': now.toIso8601String(),
       });
@@ -86,7 +86,7 @@ class HeldBillRepository {
           'product_name': item.productName, 'quantity': item.quantity,
           'unit': item.unit, 'unit_price': item.sellingPrice,
           'purchase_price': item.purchasePrice,
-          'gst_rate': item.gstRate, 'total_price': item.gstInclusive,
+          'gst_rate': item.gstRate, 'total_price': item.totalFor(cart.billType),
         });
       }
       return heldId;
