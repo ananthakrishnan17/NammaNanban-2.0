@@ -74,7 +74,8 @@ dependencies:
   file_picker: ^8.0.0
   open_file: ^3.3.2
   google_fonts: ^6.1.0
-
+  supabase_flutter: ^2.3.0
+  crypto: ^3.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

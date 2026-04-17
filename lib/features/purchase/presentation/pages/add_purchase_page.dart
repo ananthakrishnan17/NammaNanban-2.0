@@ -21,13 +21,23 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
   Supplier? _selectedSupplier;
   String _paymentMode = 'cash';
   DateTime _purchaseDate = DateTime.now();
+  // ✅ NEW: Invoice fields
+  double _invoiceAmount = 0;
+  String? _invoiceNumber;
+  final _invoiceAmtCtrl = TextEditingController();
+  final _invoiceNumCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   bool _isSaving = false;
 
   double get _total => _items.fold(0.0, (s, i) => s + i.totalCost);
   double get _gstTotal => _items.fold(0.0, (s, i) => s + i.gstAmount);
+  // Difference: invoice amount vs computed total
+  double get _invoiceDiff => _invoiceAmount > 0 ? _invoiceAmount - _total : 0;
 
-  @override void dispose() { _notesCtrl.dispose(); super.dispose(); }
+  @override void dispose() {
+    _invoiceAmtCtrl.dispose(); _invoiceNumCtrl.dispose(); _notesCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +140,42 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
                   }).toList(),
                 ),
                 SizedBox(height: 12.h),
+
+                // ✅ Invoice Number + Invoice Amount
+                Row(children: [
+                  Expanded(child: TextField(
+                    controller: _invoiceNumCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Invoice No. (optional)',
+                      prefixIcon: Icon(Icons.receipt_long),
+                    ),
+                    onChanged: (v) => _invoiceNumber = v.isEmpty ? null : v,
+                  )),
+                  SizedBox(width: 10.w),
+                  Expanded(child: TextField(
+                    controller: _invoiceAmtCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Invoice Amount ₹',
+                      prefixText: '₹ ',
+                      prefixIcon: const Icon(Icons.currency_rupee),
+                      helperText: _invoiceAmount > 0 && _items.isNotEmpty
+                          ? _invoiceDiff.abs() < 0.01
+                          ? '✅ Matches computed total'
+                          : _invoiceDiff > 0
+                          ? '⚠️ Invoice ₹${_invoiceDiff.toStringAsFixed(2)} more'
+                          : '⚠️ Invoice ₹${(-_invoiceDiff).toStringAsFixed(2)} less'
+                          : null,
+                      helperStyle: TextStyle(
+                        color: _invoiceDiff.abs() < 0.01 ? AppTheme.accent : AppTheme.warning,
+                        fontSize: 10.sp,
+                      ),
+                    ),
+                    onChanged: (v) => setState(() => _invoiceAmount = double.tryParse(v) ?? 0),
+                  )),
+                ]),
+                SizedBox(height: 10.h),
+
                 TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes (optional)', prefixIcon: Icon(Icons.note))),
                 SizedBox(height: 80.h),
               ]),
@@ -149,9 +195,26 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
                 ]),
                 SizedBox(height: 4.h),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Text('Total Amount', style: AppTheme.heading3),
+                  Text('Computed Total', style: AppTheme.heading3),
                   Text(CurrencyFormatter.format(_total), style: AppTheme.price),
                 ]),
+                // ✅ Show invoice amount if entered
+                if (_invoiceAmount > 0) ...[
+                  SizedBox(height: 4.h),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    Text('Invoice Amount', style: AppTheme.body),
+                    Text(CurrencyFormatter.format(_invoiceAmount),
+                        style: AppTheme.body.copyWith(fontWeight: FontWeight.w700,
+                            color: _invoiceDiff.abs() < 0.01 ? AppTheme.accent : AppTheme.warning)),
+                  ]),
+                  if (_invoiceDiff.abs() >= 0.01) ...[
+                    SizedBox(height: 3.h),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      Text(_invoiceDiff > 0 ? 'Extra in invoice' : 'Short in invoice', style: AppTheme.caption.copyWith(color: AppTheme.warning)),
+                      Text('₹${_invoiceDiff.abs().toStringAsFixed(2)}', style: AppTheme.caption.copyWith(color: AppTheme.warning, fontWeight: FontWeight.w600)),
+                    ]),
+                  ],
+                ],
                 SizedBox(height: 12.h),
                 ElevatedButton(
                   onPressed: _isSaving ? null : _savePurchase,

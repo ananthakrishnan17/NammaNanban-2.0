@@ -33,29 +33,36 @@ class _SubscriptionLockScreenState extends State<SubscriptionLockScreen> {
     }
     setState(() { _isActivating = true; _errorMsg = null; });
 
-    final success = await SubscriptionService.instance
+    // ✅ FIX: activateWithKey returns ActivateResult, not bool
+    final result = await SubscriptionService.instance
         .activateWithKey(_keyCtrl.text.trim());
 
     setState(() => _isActivating = false);
 
-    if (success && mounted) {
+    if (result.success && mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const MainShell()),
       );
     } else {
-      setState(() => _errorMsg = 'Invalid license key. Please check and try again.');
+      setState(() => _errorMsg = result.message);
     }
   }
 
   Future<void> _activateTrial() async {
-    setState(() => _isTrialActivating = true);
-    await SubscriptionService.instance.activateFreeTrial();
-    if (mounted) {
+    setState(() { _isTrialActivating = true; _errorMsg = null; });
+    // ✅ FIX: activateFreeTrial removed — use a special trial key via Supabase
+    // For demo: activate with a hardcoded trial key (replace with your Supabase trial logic)
+    final result = await SubscriptionService.instance.activateWithKey('SHOP-TRIAL-FREE-30D');
+    setState(() => _isTrialActivating = false);
+    if (result.success && mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const MainShell()),
       );
+    } else {
+      // If trial key not in Supabase, show contact message
+      setState(() => _errorMsg = 'Contact us for a free trial: +91 98765 43210');
     }
   }
 

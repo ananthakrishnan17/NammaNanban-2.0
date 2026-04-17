@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/supabase/supabase_auth_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../subscription/services/subscription_service.dart';
 import '../../../subscription/presentation/pages/subscription_lock_screen.dart';
@@ -61,17 +62,47 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
   Future<void> _verifyPin() async {
     final user = _selectedUser!;
-    if (_enteredPin == user.pin) {
+
+    AppUser? verifiedUser;
+
+    // cloud verify
+    final license = await SupabaseAuthService.instance.getCachedLicense();
+    if (license != null && license.success) {
+      verifiedUser = await SupabaseAuthService.instance.verifyUserPin(
+        user.username,
+        _enteredPin,
+      );
+    } else {
+      // local fallback
+      if (_enteredPin == user.pin) {
+        verifiedUser = user;
+      }
+    }
+
+    if (verifiedUser != null) {
       final status = await SubscriptionService.instance.getStatus();
       if (!mounted) return;
-      context.read<UserBloc>().currentUser = user;
+
+      context.read<UserBloc>().currentUser = verifiedUser;
+
       if (status.isLocked) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => SubscriptionLockScreen(status: status)));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SubscriptionLockScreen(status: status),
+          ),
+        );
       } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainShell()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MainShell()),
+        );
       }
     } else {
-      setState(() { _isPinWrong = true; _enteredPin = ''; });
+      setState(() {
+        _isPinWrong = true;
+        _enteredPin = '';
+      });
       _shakeCtrl.forward(from: 0);
     }
   }
