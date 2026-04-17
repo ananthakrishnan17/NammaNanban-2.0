@@ -1,10 +1,12 @@
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/utils/currency_formatter.dart';
 import '../../domain/entities/bill.dart';
 
 abstract class BillingRepository {
   Future<Bill> saveBill({
     required List<CartItem> items, String billType, double discountAmount,
-    String paymentMode, int? customerId, String? customerName,
+    String paymentMode, List<SplitPayment>? splitPayments,
+    int? customerId, String? customerName,
     String? customerAddress, String? customerGstin,
   });
   Future<List<Bill>> getBillsByDate(DateTime date);
@@ -25,11 +27,26 @@ class BillingRepositoryImpl implements BillingRepository {
   Future<Bill> saveBill({
     required List<CartItem> items, String billType = 'retail',
     double discountAmount = 0.0, String paymentMode = 'cash',
+    List<SplitPayment>? splitPayments,
     int? customerId, String? customerName, String? customerAddress, String? customerGstin,
   }) async {
     final db = await _dbHelper.database;
     final now = DateTime.now();
     final bt = billType == 'wholesale' ? BillType.wholesale : BillType.retail;
+
+    // If split payments provided, override paymentMode and build summary string
+    final bool isSplit = splitPayments != null && splitPayments.isNotEmpty;
+    String effectivePaymentMode = paymentMode;
+    String? splitSummary;
+    if (isSplit) {
+      effectivePaymentMode = 'split';
+      splitSummary = splitPayments.map((s) {
+        final label = PaymentMode.values
+            .firstWhere((m) => m.name == s.mode, orElse: () => PaymentMode.cash)
+            .label;
+        return '$label ${CurrencyFormatter.format(s.amount)}';
+      }).join(' + ');
+    }
 
     double totalAmount = items.fold(0.0, (s, i) => s + i.totalFor(bt)) - discountAmount;
     double totalProfit = items.fold(0.0, (s, i) => s + i.profitFor(bt));
@@ -43,8 +60,21 @@ class BillingRepositoryImpl implements BillingRepository {
         'total_amount': totalAmount, 'total_profit': totalProfit,
         'discount_amount': discountAmount, 'gst_total': gstTotal,
         'cgst_total': gstTotal / 2, 'sgst_total': gstTotal / 2,
-        'payment_mode': paymentMode, 'created_at': now.toIso8601String(),
+        'payment_mode': effectivePaymentMode,
+        'split_payment_summary': splitSummary,
+        'created_at': now.toIso8601String(),
       });
+
+      // Store individual split entries
+      if (isSplit) {
+        for (final split in splitPayments) {
+          await txn.insert('bill_payment_splits', {
+            'bill_id': billId,
+            'payment_mode': split.mode,
+            'amount': split.amount,
+          });
+        }
+      }
 
       final billItems = <BillItem>[];
       for (final cartItem in items) {
@@ -72,7 +102,9 @@ class BillingRepositoryImpl implements BillingRepository {
       return Bill(id: billId, billNumber: 'BILL-$billId', billType: billType,
           items: billItems, totalAmount: totalAmount, totalProfit: totalProfit,
           discountAmount: discountAmount, gstTotal: gstTotal, cgstTotal: gstTotal/2,
-          sgstTotal: gstTotal/2, paymentMode: paymentMode, customerId: customerId,
+          sgstTotal: gstTotal/2, paymentMode: effectivePaymentMode,
+          splitPaymentSummary: splitSummary,
+          customerId: customerId,
           customerName: customerName, customerAddress: customerAddress,
           customerGstin: customerGstin, createdAt: now);
     });

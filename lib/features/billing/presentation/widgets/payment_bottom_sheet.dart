@@ -15,8 +15,19 @@ class PaymentBottomSheet extends StatefulWidget {
   State<PaymentBottomSheet> createState() => _PaymentBottomSheetState();
 }
 
+class _SplitEntry {
+  String mode;
+  final TextEditingController controller;
+  _SplitEntry({required this.mode, String amount = ''})
+      : controller = TextEditingController(text: amount);
+  double get amount => double.tryParse(controller.text) ?? 0.0;
+  void dispose() => controller.dispose();
+}
+
 class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
   late String _selectedMode;
+  bool _isSplitMode = false;
+  final List<_SplitEntry> _splitEntries = [];
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _customerController = TextEditingController();
 
@@ -28,14 +39,38 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
         ? widget.cart.discountAmount.toStringAsFixed(2)
         : '';
     _customerController.text = widget.cart.customerName ?? '';
+    // Initialise split entries if cart already has splits
+    if (widget.cart.splitPayments.isNotEmpty) {
+      _isSplitMode = true;
+      for (final sp in widget.cart.splitPayments) {
+        _splitEntries.add(_SplitEntry(
+          mode: sp.mode,
+          amount: sp.amount % 1 == 0
+              ? sp.amount.toInt().toString()
+              : sp.amount.toStringAsFixed(2),
+        ));
+      }
+    } else {
+      _splitEntries.add(_SplitEntry(mode: PaymentMode.upi.name));
+      _splitEntries.add(_SplitEntry(mode: PaymentMode.cash.name));
+    }
   }
 
   @override
   void dispose() {
     _discountController.dispose();
     _customerController.dispose();
+    for (final e in _splitEntries) {
+      e.dispose();
+    }
     super.dispose();
   }
+
+  double get _splitTotal =>
+      _splitEntries.fold(0.0, (s, e) => s + e.amount);
+
+  bool get _isSplitBalanced =>
+      (_splitTotal - widget.cart.totalAmount).abs() <= 0.01;
 
   @override
   Widget build(BuildContext context) {
@@ -134,62 +169,261 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
                 ),
                 SizedBox(height: 16.h),
 
-                // ── Payment Mode ───────────────────────────────────────────
-                Text('Payment Mode', style: AppTheme.caption),
-                SizedBox(height: 8.h),
+                // ── Payment Mode Toggle ────────────────────────────────────
                 Row(
-                  children: PaymentMode.values.map((mode) {
-                    final isSelected = _selectedMode == mode.name;
-                    return Expanded(
+                  children: [
+                    Expanded(
                       child: GestureDetector(
-                        onTap: () {
-                          setState(() => _selectedMode = mode.name);
-                          context
-                              .read<BillingBloc>()
-                              .add(SetPaymentMode(mode.name));
-                        },
+                        onTap: () => setState(() => _isSplitMode = false),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          margin: EdgeInsets.only(right: 6.w),
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10.h, horizontal: 4.w),
+                          padding: EdgeInsets.symmetric(vertical: 10.h),
                           decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppTheme.primary.withOpacity(0.12)
+                            color: !_isSplitMode
+                                ? AppTheme.primary
                                 : AppTheme.surface,
-                            borderRadius: BorderRadius.circular(10.r),
-                            border: Border.all(
-                              color: isSelected
-                                  ? AppTheme.primary
-                                  : AppTheme.divider,
-                              width: isSelected ? 1.5 : 1,
+                            borderRadius: BorderRadius.only(
+                              topLeft: Radius.circular(10.r),
+                              bottomLeft: Radius.circular(10.r),
                             ),
+                            border: Border.all(color: AppTheme.primary),
                           ),
-                          child: Column(
-                            children: [
-                              Text(mode.icon,
-                                  style: TextStyle(fontSize: 18.sp)),
-                              SizedBox(height: 3.h),
-                              Text(
-                                mode.label,
-                                style: TextStyle(
-                                  fontSize: 10.sp,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  color: isSelected
-                                      ? AppTheme.primary
-                                      : AppTheme.textSecondary,
-                                  fontFamily: 'Poppins',
-                                ),
+                          child: Center(
+                            child: Text(
+                              'Single Payment',
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                fontWeight: FontWeight.w600,
+                                color: !_isSplitMode
+                                    ? Colors.white
+                                    : AppTheme.primary,
+                                fontFamily: 'Poppins',
                               ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
-                    );
-                  }).toList(),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _isSplitMode = true),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: EdgeInsets.symmetric(vertical: 10.h),
+                          decoration: BoxDecoration(
+                            color: _isSplitMode
+                                ? AppTheme.primary
+                                : AppTheme.surface,
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(10.r),
+                              bottomRight: Radius.circular(10.r),
+                            ),
+                            border: Border.all(color: AppTheme.primary),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Split Payment',
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                fontWeight: FontWeight.w600,
+                                color: _isSplitMode
+                                    ? Colors.white
+                                    : AppTheme.primary,
+                                fontFamily: 'Poppins',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                SizedBox(height: 12.h),
+
+                if (!_isSplitMode) ...[
+                  // ── Single Payment Mode ──────────────────────────────────
+                  Text('Payment Mode', style: AppTheme.caption),
+                  SizedBox(height: 8.h),
+                  Row(
+                    children: PaymentMode.values.map((mode) {
+                      final isSelected = _selectedMode == mode.name;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedMode = mode.name);
+                            context
+                                .read<BillingBloc>()
+                                .add(SetPaymentMode(mode.name));
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            margin: EdgeInsets.only(right: 6.w),
+                            padding: EdgeInsets.symmetric(
+                                vertical: 10.h, horizontal: 4.w),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppTheme.primary.withOpacity(0.12)
+                                  : AppTheme.surface,
+                              borderRadius: BorderRadius.circular(10.r),
+                              border: Border.all(
+                                color: isSelected
+                                    ? AppTheme.primary
+                                    : AppTheme.divider,
+                                width: isSelected ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                Text(mode.icon,
+                                    style: TextStyle(fontSize: 18.sp)),
+                                SizedBox(height: 3.h),
+                                Text(
+                                  mode.label,
+                                  style: TextStyle(
+                                    fontSize: 10.sp,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: isSelected
+                                        ? AppTheme.primary
+                                        : AppTheme.textSecondary,
+                                    fontFamily: 'Poppins',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ] else ...[
+                  // ── Split Payment Entries ────────────────────────────────
+                  ...List.generate(_splitEntries.length, (i) {
+                    final entry = _splitEntries[i];
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: 10.h),
+                      child: Row(
+                        children: [
+                          // Mode dropdown
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8.w),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: AppTheme.divider),
+                              borderRadius: BorderRadius.circular(8.r),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: entry.mode,
+                                isDense: true,
+                                items: PaymentMode.values.map((m) {
+                                  return DropdownMenuItem(
+                                    value: m.name,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(m.icon,
+                                            style: TextStyle(fontSize: 14.sp)),
+                                        SizedBox(width: 4.w),
+                                        Text(m.label,
+                                            style: TextStyle(
+                                                fontSize: 12.sp,
+                                                fontFamily: 'Poppins')),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (v) {
+                                  if (v != null) {
+                                    setState(() => entry.mode = v);
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8.w),
+                          // Amount field
+                          Expanded(
+                            child: TextField(
+                              controller: entry.controller,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                  decimal: true),
+                              onChanged: (_) => setState(() {}),
+                              decoration: InputDecoration(
+                                hintText: '0.00',
+                                prefixText: '₹ ',
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8.r)),
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10.w, vertical: 10.h),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 6.w),
+                          // Delete button (only if more than one entry)
+                          if (_splitEntries.length > 1)
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _splitEntries[i].dispose();
+                                  _splitEntries.removeAt(i);
+                                });
+                              },
+                              child: Icon(Icons.delete_outline,
+                                  color: AppTheme.danger, size: 22.sp),
+                            )
+                          else
+                            SizedBox(width: 22.sp),
+                        ],
+                      ),
+                    );
+                  }),
+                  // Add payment method button
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _splitEntries.add(
+                            _SplitEntry(mode: PaymentMode.cash.name));
+                      });
+                    },
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: const Text('Add Payment Method'),
+                    style: TextButton.styleFrom(
+                        foregroundColor: AppTheme.primary),
+                  ),
+                  SizedBox(height: 4.h),
+                  // Remaining balance indicator
+                  Builder(builder: (context) {
+                    final remaining =
+                        cart.totalAmount - _splitTotal;
+                    final isBalanced = remaining.abs() <= 0.01;
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          isBalanced
+                              ? '✅ Balanced'
+                              : remaining > 0
+                                  ? 'Remaining: ${CurrencyFormatter.format(remaining)}'
+                                  : 'Excess: ${CurrencyFormatter.format(-remaining)}',
+                          style: TextStyle(
+                            fontSize: 13.sp,
+                            fontWeight: FontWeight.w600,
+                            color: isBalanced
+                                ? AppTheme.accent
+                                : AppTheme.danger,
+                            fontFamily: 'Poppins',
+                          ),
+                        ),
+                        Text(
+                          'Total: ${CurrencyFormatter.format(cart.totalAmount)}',
+                          style: AppTheme.caption,
+                        ),
+                      ],
+                    );
+                  }),
+                ],
                 SizedBox(height: 20.h),
 
                 // ── Total Summary ──────────────────────────────────────────
@@ -238,10 +472,24 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
                   width: double.infinity,
                   height: 52.h,
                   child: ElevatedButton(
-                    // ✅ Disable while saving to prevent double-tap
-                    onPressed: isSaving
+                    // ✅ Disable while saving or split not balanced
+                    onPressed: isSaving || (_isSplitMode && !_isSplitBalanced)
                         ? null
                         : () {
+                      if (_isSplitMode) {
+                        final splits = _splitEntries
+                            .map((e) =>
+                                SplitPayment(mode: e.mode, amount: e.amount))
+                            .toList();
+                        context
+                            .read<BillingBloc>()
+                            .add(SetSplitPayments(splits));
+                      } else {
+                        // Clear any previous split payments when using single mode
+                        context
+                            .read<BillingBloc>()
+                            .add(SetSplitPayments(const []));
+                      }
                       context.read<BillingBloc>().add(SaveBill());
                     },
                     style: ElevatedButton.styleFrom(

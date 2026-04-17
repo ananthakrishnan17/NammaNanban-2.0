@@ -78,6 +78,13 @@ class SetCustomerName extends BillingEvent {
 
 class SaveBill extends BillingEvent {}
 
+class SetSplitPayments extends BillingEvent {
+  final List<SplitPayment> splits;
+  SetSplitPayments(this.splits);
+  @override
+  List<Object?> get props => [splits];
+}
+
 // ✅ NEW: Used after print/dismiss to fully reset the cart
 class ResetAfterSave extends BillingEvent {}
 
@@ -100,6 +107,7 @@ class CartState extends Equatable {
   final List<CartItem> items;
   final double discountAmount;
   final String paymentMode;
+  final List<SplitPayment> splitPayments;
   final BillType billType;
   final Customer? selectedCustomer;
   final String? customerName;
@@ -111,6 +119,7 @@ class CartState extends Equatable {
     this.items = const [],
     this.discountAmount = 0.0,
     this.paymentMode = 'cash',
+    this.splitPayments = const [],
     this.billType = BillType.retail,
     this.selectedCustomer,
     this.customerName,
@@ -130,6 +139,7 @@ class CartState extends Equatable {
     List<CartItem>? items,
     double? discountAmount,
     String? paymentMode,
+    List<SplitPayment>? splitPayments,
     BillType? billType,
     Customer? selectedCustomer,
     String? customerName,
@@ -143,6 +153,7 @@ class CartState extends Equatable {
         items: items ?? this.items,
         discountAmount: discountAmount ?? this.discountAmount,
         paymentMode: paymentMode ?? this.paymentMode,
+        splitPayments: splitPayments ?? this.splitPayments,
         billType: billType ?? this.billType,
         selectedCustomer: selectedCustomer ?? this.selectedCustomer,
         customerName: customerName ?? this.customerName,
@@ -157,6 +168,7 @@ class CartState extends Equatable {
     items,
     discountAmount,
     paymentMode,
+    splitPayments,
     billType,
     selectedCustomer,
     isSaving,
@@ -178,6 +190,7 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
     on<ClearCart>((e, emit) => emit(const CartState()));
     on<ApplyDiscount>((e, emit) => emit(state.copyWith(discountAmount: e.amount)));
     on<SetPaymentMode>((e, emit) => emit(state.copyWith(paymentMode: e.mode)));
+    on<SetSplitPayments>((e, emit) => emit(state.copyWith(splitPayments: e.splits)));
     on<SetBillType>((e, emit) => emit(state.copyWith(billType: e.billType)));
     on<SetCustomer>((e, emit) => emit(state.copyWith(
         selectedCustomer: e.customer, customerName: e.customer?.name)));
@@ -239,6 +252,7 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
         billType: state.billType.value,
         discountAmount: state.discountAmount,
         paymentMode: state.paymentMode,
+        splitPayments: state.splitPayments.isNotEmpty ? state.splitPayments : null,
         customerId: state.selectedCustomer?.id,
         customerName: state.selectedCustomer?.name ?? state.customerName,
         customerAddress: state.selectedCustomer?.address,

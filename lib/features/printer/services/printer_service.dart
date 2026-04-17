@@ -70,7 +70,12 @@ class PrinterService {
       _printer.printLeftRight('Bill No:', bill.billNumber, 1);
       _printer.printLeftRight(
           'Date:', _formatDateTime(bill.createdAt), 1);
-      _printer.printLeftRight('Payment:', bill.paymentMode.toUpperCase(), 1);
+      if (bill.paymentMode == 'split' && bill.splitPaymentSummary != null) {
+        _printer.printLeftRight('Payment:', 'Split', 1);
+        _printer.printCustom(bill.splitPaymentSummary!, 1, 1);
+      } else {
+        _printer.printLeftRight('Payment:', bill.paymentMode.toUpperCase(), 1);
+      }
       if (bill.customerName != null && bill.customerName!.isNotEmpty) {
         _printer.printLeftRight('Customer:', bill.customerName!, 1);
       }

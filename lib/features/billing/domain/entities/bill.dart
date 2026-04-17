@@ -96,6 +96,7 @@ class Bill extends Equatable {
   final String? customerAddress;
   final String? customerGstin;
   final String? notes;
+  final String? splitPaymentSummary;
   final DateTime createdAt;
 
   const Bill({this.id, required this.billNumber, this.billType = 'retail',
@@ -103,7 +104,7 @@ class Bill extends Equatable {
     this.discountAmount = 0.0, this.gstTotal = 0.0, this.cgstTotal = 0.0,
     this.sgstTotal = 0.0, this.paymentMode = 'cash', this.customerId,
     this.customerName, this.customerAddress, this.customerGstin,
-    this.notes, required this.createdAt});
+    this.notes, this.splitPaymentSummary, required this.createdAt});
 
   double get finalAmount => totalAmount - discountAmount;
   @override List<Object?> get props => [id, billNumber, createdAt];
@@ -113,6 +114,12 @@ enum PaymentMode { cash, upi, card, credit }
 extension PaymentModeExt on PaymentMode {
   String get label { switch (this) { case PaymentMode.cash: return 'Cash'; case PaymentMode.upi: return 'UPI'; case PaymentMode.card: return 'Card'; case PaymentMode.credit: return 'Credit'; } }
   String get icon { switch (this) { case PaymentMode.cash: return '💵'; case PaymentMode.upi: return '📱'; case PaymentMode.card: return '💳'; case PaymentMode.credit: return '📋'; } }
+}
+
+class SplitPayment {
+  final String mode;   // 'cash', 'upi', 'card', 'credit'
+  final double amount;
+  const SplitPayment({required this.mode, required this.amount});
 }
 
 

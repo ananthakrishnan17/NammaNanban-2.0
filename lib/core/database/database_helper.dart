@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 4,
+    return await openDatabase(path, version: 5,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -100,8 +100,15 @@ class DatabaseHelper {
       total_amount REAL NOT NULL, total_profit REAL NOT NULL DEFAULT 0.0,
       discount_amount REAL DEFAULT 0.0, gst_total REAL DEFAULT 0.0,
       cgst_total REAL DEFAULT 0.0, sgst_total REAL DEFAULT 0.0, igst_total REAL DEFAULT 0.0,
-      payment_mode TEXT DEFAULT 'cash', billed_by_user_id INTEGER, notes TEXT,
+      payment_mode TEXT DEFAULT 'cash', split_payment_summary TEXT, billed_by_user_id INTEGER, notes TEXT,
       created_at TEXT NOT NULL, FOREIGN KEY (customer_id) REFERENCES customers (id))''');
+
+    await db.execute('''CREATE TABLE bill_payment_splits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bill_id INTEGER NOT NULL,
+      payment_mode TEXT NOT NULL,
+      amount REAL NOT NULL,
+      FOREIGN KEY (bill_id) REFERENCES bills (id) ON DELETE CASCADE)''');
 
     await db.execute('''CREATE TABLE bill_items (id INTEGER PRIMARY KEY AUTOINCREMENT,
       bill_id INTEGER NOT NULL, product_id INTEGER NOT NULL, product_name TEXT NOT NULL,
@@ -214,6 +221,19 @@ class DatabaseHelper {
     if (oldVersion < 4) {
       // gst_inclusive column to held_bill_items (preserves correct GST behaviour on restore)
       try { await db.execute('ALTER TABLE held_bill_items ADD COLUMN gst_inclusive INTEGER DEFAULT 1'); } catch (_) {}
+    }
+    if (oldVersion < 5) {
+      // split_payment_summary column to bills
+      try { await db.execute('ALTER TABLE bills ADD COLUMN split_payment_summary TEXT'); } catch (_) {}
+      // bill_payment_splits table for multi-mode payments
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS bill_payment_splits (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bill_id INTEGER NOT NULL,
+          payment_mode TEXT NOT NULL,
+          amount REAL NOT NULL,
+          FOREIGN KEY (bill_id) REFERENCES bills (id) ON DELETE CASCADE)''');
+      } catch (_) {}
     }
     await _seed(db, now);
   }
