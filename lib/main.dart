@@ -19,11 +19,18 @@ import 'features/auth/presentation/pages/login_screen.dart';
 import 'features/setup/presentation/pages/setup_page.dart';
 import 'features/shell/presentation/pages/main_shell.dart';
 import 'features/users/domain/entities/app_user.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/supabase/supabase_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(statusBarColor: Colors.transparent, statusBarIconBrightness: Brightness.dark));
+  await Supabase.initialize(
+    url: SupabaseConfig.supabaseUrl,
+    anonKey: SupabaseConfig.supabaseAnonKey,
+  );
+
   await DatabaseHelper.instance.database;
   await di.init();
   await AppLocalizations.instance.load();
