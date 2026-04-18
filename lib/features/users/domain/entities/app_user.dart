@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:bloc/bloc.dart';
+import 'package:crypto/crypto.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
 
@@ -156,6 +158,11 @@ class UserRepository {
   final DatabaseHelper _db;
   UserRepository(this._db);
 
+  String _hashPin(String pin) {
+    final bytes = utf8.encode(pin);
+    return sha256.convert(bytes).toString();
+  }
+
   Future<List<AppUser>> getAllUsers() async {
     final db = await _db.database;
     final rows = await db.query('app_users', orderBy: 'role DESC, username ASC');
@@ -166,7 +173,7 @@ class UserRepository {
     final db = await _db.database;
     final rows = await db.query('app_users',
         where: 'username = ? AND pin = ? AND is_active = 1',
-        whereArgs: [username, pin]);
+        whereArgs: [username, _hashPin(pin)]);
     if (rows.isEmpty) return null;
     return AppUser.fromMap(rows.first);
   }
@@ -180,7 +187,9 @@ class UserRepository {
 
   Future<int> createUser(AppUser user) async {
     final db = await _db.database;
-    return await db.insert('app_users', user.toMap());
+    final map = user.toMap();
+    map['pin'] = _hashPin(user.pin);
+    return await db.insert('app_users', map);
   }
 
   Future<bool> updateUser(AppUser user) async {
@@ -204,7 +213,7 @@ class UserRepository {
   Future<bool> changePin(int userId, String newPin) async {
     final db = await _db.database;
     return (await db.update('app_users',
-        {'pin': newPin, 'updated_at': DateTime.now().toIso8601String()},
+        {'pin': _hashPin(newPin), 'updated_at': DateTime.now().toIso8601String()},
         where: 'id = ?', whereArgs: [userId])) > 0;
   }
 }
