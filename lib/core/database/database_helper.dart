@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 6,
+    return await openDatabase(path, version: 7,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -101,6 +101,7 @@ class DatabaseHelper {
       discount_amount REAL DEFAULT 0.0, gst_total REAL DEFAULT 0.0,
       cgst_total REAL DEFAULT 0.0, sgst_total REAL DEFAULT 0.0, igst_total REAL DEFAULT 0.0,
       payment_mode TEXT DEFAULT 'cash', split_payment_summary TEXT, billed_by_user_id INTEGER, notes TEXT,
+      status TEXT DEFAULT 'active', is_modified INTEGER DEFAULT 0, modification_note TEXT,
       created_at TEXT NOT NULL, FOREIGN KEY (customer_id) REFERENCES customers (id))''');
 
     await db.execute('''CREATE TABLE bill_payment_splits (
@@ -239,6 +240,24 @@ class DatabaseHelper {
     if (oldVersion < 6) {
       try { await db.execute('ALTER TABLE bill_items ADD COLUMN sale_uom_id INTEGER DEFAULT NULL'); } catch (_) {}
       try { await db.execute('ALTER TABLE bill_items ADD COLUMN conversion_qty REAL DEFAULT 1.0'); } catch (_) {}
+    }
+    if (oldVersion < 7) {
+      try { await db.execute("ALTER TABLE bills ADD COLUMN status TEXT DEFAULT 'active'"); } catch (_) {}
+      try { await db.execute('ALTER TABLE bills ADD COLUMN is_modified INTEGER DEFAULT 0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE bills ADD COLUMN modification_note TEXT'); } catch (_) {}
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS crm_points_ledger (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL,
+          customer_name TEXT NOT NULL,
+          points_type TEXT NOT NULL,
+          points REAL NOT NULL DEFAULT 0.0,
+          balance REAL NOT NULL DEFAULT 0.0,
+          reference_id TEXT,
+          note TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (customer_id) REFERENCES customers (id))''');
+      } catch (_) {}
     }
     await _seed(db, now);
   }
