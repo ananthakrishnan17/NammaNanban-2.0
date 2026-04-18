@@ -10,6 +10,7 @@ class Expense extends Equatable {
   final double amount;
   final DateTime date;
   final DateTime createdAt;
+  final bool isRawMaterial;
 
   const Expense({
     this.id,
@@ -18,6 +19,7 @@ class Expense extends Equatable {
     required this.amount,
     required this.date,
     required this.createdAt,
+    this.isRawMaterial = false,
   });
 
   factory Expense.fromMap(Map<String, dynamic> map) => Expense(
@@ -27,6 +29,7 @@ class Expense extends Equatable {
     amount: (map['amount'] as num).toDouble(),
     date: DateTime.parse(map['date'] as String),
     createdAt: DateTime.parse(map['created_at'] as String),
+    isRawMaterial: (map['is_raw_material'] as int? ?? 0) == 1,
   );
 
   Map<String, dynamic> toMap() => {
@@ -36,10 +39,11 @@ class Expense extends Equatable {
     'amount': amount,
     'date': date.toIso8601String(),
     'created_at': createdAt.toIso8601String(),
+    'is_raw_material': isRawMaterial ? 1 : 0,
   };
 
   @override
-  List<Object?> get props => [id, category, amount, date];
+  List<Object?> get props => [id, category, amount, date, isRawMaterial];
 }
 
 const List<String> kExpenseCategories = [
@@ -55,6 +59,7 @@ abstract class ExpenseRepository {
   Future<bool> deleteExpense(int id);
   Future<Map<String, double>> getDailyExpenseSummary(DateTime date);
   Future<Map<String, double>> getMonthlyExpenseSummary(int year, int month);
+  Future<double> getTodayRawMaterialExpenses(DateTime date);
 }
 
 class ExpenseRepositoryImpl implements ExpenseRepository {
@@ -125,6 +130,17 @@ class ExpenseRepositoryImpl implements ExpenseRepository {
       map[r['category'] as String] = (r['total'] as num).toDouble();
     }
     return map;
+  }
+
+  @override
+  Future<double> getTodayRawMaterialExpenses(DateTime date) async {
+    final db = await _dbHelper.database;
+    final dateStr = date.toIso8601String().substring(0, 10);
+    final result = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0.0) as total FROM expenses
+      WHERE date LIKE ? AND is_raw_material = 1
+    ''', ['$dateStr%']);
+    return (result.first['total'] as num).toDouble();
   }
 }
 
