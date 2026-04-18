@@ -36,8 +36,7 @@ void main() async {
   await AppLocalizations.instance.load();
   final prefs = await SharedPreferences.getInstance();
   final bool isSetupDone = prefs.getBool('setup_done') ?? false;
-  final bool hasPIN = prefs.getString('shop_pin') != null;
-  Widget startPage = !isSetupDone ? const SetupPage() : hasPIN ? const LoginScreen() : const MainShell();
+  Widget startPage = !isSetupDone ? const SetupPage() : const LoginScreen();
   runApp(ShopPOSApp(startPage: startPage));
 }
 

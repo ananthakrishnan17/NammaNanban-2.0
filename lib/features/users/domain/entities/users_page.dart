@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../../../core/supabase/supabase_auth_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/app_user.dart';
 
@@ -18,14 +19,43 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUser = context.read<UserBloc>().currentUser;
+    final isAdmin = currentUser?.isAdmin == true;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('User Management')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showUserForm(context, null),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.person_add, color: Colors.white),
-        label: const Text('Add User', style: TextStyle(color: Colors.white)),
+      appBar: AppBar(
+        title: const Text('User Management'),
+        actions: [
+          FutureBuilder<int>(
+            future: SupabaseAuthService.instance.getMaxAllowedUsers(),
+            builder: (_, snap) {
+              if (!snap.hasData) return const SizedBox.shrink();
+              return BlocBuilder<UserBloc, UserState>(
+                builder: (_, state) {
+                  final users = state is UserListLoaded ? state.users : <AppUser>[];
+                  return Padding(
+                    padding: EdgeInsets.only(right: 16.w),
+                    child: Center(
+                      child: Text(
+                        '${users.length} / ${snap.data} users',
+                        style: AppTheme.caption.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ],
       ),
+      floatingActionButton: isAdmin
+          ? FloatingActionButton.extended(
+              onPressed: () => _showUserForm(context, null),
+              backgroundColor: AppTheme.primary,
+              icon: const Icon(Icons.person_add, color: Colors.white),
+              label: const Text('Add User', style: TextStyle(color: Colors.white)),
+            )
+          : null,
       body: BlocBuilder<UserBloc, UserState>(
         builder: (ctx, state) {
           if (state is UserLoading) return const Center(child: CircularProgressIndicator());
@@ -54,7 +84,8 @@ class _UsersPageState extends State<UsersPage> {
 
   Widget _userTile(BuildContext ctx, AppUser user) {
     final currentUser = ctx.read<UserBloc>().currentUser;
-    final isCurrentUser = currentUser?.id == user.id;
+    final isCurrentUser = currentUser?.username == user.username;
+    final isAdmin = currentUser?.isAdmin == true;
 
     return Container(
       decoration: BoxDecoration(
@@ -107,25 +138,26 @@ class _UsersPageState extends State<UsersPage> {
                 ]),
               ]),
             ),
-            // Actions menu
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                if (v == 'edit') _showUserForm(ctx, user);
-                if (v == 'toggle') ctx.read<UserBloc>().add(ToggleUserActive(user.id!, !user.isActive));
-                if (v == 'delete' && !isCurrentUser) _confirmDelete(ctx, user);
-                if (v == 'change_pin') _showChangePinDialog(ctx, user);
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 16), SizedBox(width: 8), Text('Edit Permissions')])),
-                const PopupMenuItem(value: 'change_pin', child: Row(children: [Icon(Icons.pin, size: 16), SizedBox(width: 8), Text('Change PIN')])),
-                PopupMenuItem(value: 'toggle', child: Row(children: [
-                  Icon(user.isActive ? Icons.block : Icons.check_circle, size: 16),
-                  SizedBox(width: 8), Text(user.isActive ? 'Deactivate' : 'Activate'),
-                ])),
-                if (!isCurrentUser) const PopupMenuItem(value: 'delete',
-                    child: Row(children: [Icon(Icons.delete, size: 16, color: AppTheme.danger), SizedBox(width: 8), Text('Delete', style: TextStyle(color: AppTheme.danger))])),
-              ],
-            ),
+            // Actions menu (admin only)
+            if (isAdmin)
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == 'edit') _showUserForm(ctx, user);
+                  if (v == 'toggle') ctx.read<UserBloc>().add(ToggleUserActive(user.id!, !user.isActive));
+                  if (v == 'delete' && !isCurrentUser) _confirmDelete(ctx, user);
+                  if (v == 'change_pin') _showChangePinDialog(ctx, user);
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 16), SizedBox(width: 8), Text('Edit Permissions')])),
+                  const PopupMenuItem(value: 'change_pin', child: Row(children: [Icon(Icons.pin, size: 16), SizedBox(width: 8), Text('Change PIN')])),
+                  PopupMenuItem(value: 'toggle', child: Row(children: [
+                    Icon(user.isActive ? Icons.block : Icons.check_circle, size: 16),
+                    SizedBox(width: 8), Text(user.isActive ? 'Deactivate' : 'Activate'),
+                  ])),
+                  if (!isCurrentUser) const PopupMenuItem(value: 'delete',
+                      child: Row(children: [Icon(Icons.delete, size: 16, color: AppTheme.danger), SizedBox(width: 8), Text('Delete', style: TextStyle(color: AppTheme.danger))])),
+                ],
+              ),
           ]),
 
           // Permissions chips (only for non-admin)
@@ -178,6 +210,8 @@ class _UsersPageState extends State<UsersPage> {
     UserRole role = existing?.role ?? UserRole.user;
     UserPermissions perms = existing?.permissions ?? UserPermissions.defaultUser();
     String? pinError;
+    String? saveError;
+    bool isSaving = false;
     final isEditing = existing != null;
 
     showModalBottomSheet(
@@ -255,29 +289,76 @@ class _UsersPageState extends State<UsersPage> {
                         Expanded(child: Text('Admin has full access to all features automatically.', style: AppTheme.caption.copyWith(color: AppTheme.primary))),
                       ])),
                 ],
+
+                if (saveError != null) ...[
+                  SizedBox(height: 10.h),
+                  Container(
+                    padding: EdgeInsets.all(10.w),
+                    decoration: BoxDecoration(color: AppTheme.danger.withOpacity(0.1), borderRadius: BorderRadius.circular(8.r), border: Border.all(color: AppTheme.danger.withOpacity(0.4))),
+                    child: Text(saveError!, style: TextStyle(color: AppTheme.danger, fontSize: 12.sp, fontFamily: 'Poppins')),
+                  ),
+                ],
+
                 SizedBox(height: 24.h),
 
                 // Save button
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: isSaving ? null : () async {
                     if (usernameCtrl.text.trim().isEmpty) return;
                     if (!isEditing) {
                       if (pinCtrl.text.length != 4) { setSt(() => pinError = 'PIN must be 4 digits'); return; }
                       if (pinCtrl.text != confirmPinCtrl.text) { setSt(() => pinError = 'PINs do not match'); return; }
                     }
+
                     final now = DateTime.now();
-                    final user = AppUser(
-                      id: existing?.id,
-                      username: usernameCtrl.text.trim(),
-                      pin: isEditing ? (existing?.pin ?? '0000') : pinCtrl.text,
-                      role: role, permissions: perms,
-                      createdAt: existing?.createdAt ?? now, updatedAt: now,
-                    );
-                    if (isEditing) ctx.read<UserBloc>().add(UpdateUser(user));
-                    else ctx.read<UserBloc>().add(CreateUser(user));
-                    Navigator.pop(ctx);
+
+                    if (!isEditing) {
+                      setSt(() { isSaving = true; saveError = null; });
+                      final result = await SupabaseAuthService.instance.createCloudUser(AppUser(
+                        id: null,
+                        username: usernameCtrl.text.trim(),
+                        pin: pinCtrl.text,
+                        role: role,
+                        permissions: perms,
+                        isActive: true,
+                        createdAt: now,
+                        updatedAt: now,
+                      ));
+                      if (!result.success) {
+                        setSt(() { saveError = result.error; isSaving = false; });
+                        return;
+                      }
+                      // Sync to local DB
+                      ctx.read<UserBloc>().add(CreateUser(AppUser(
+                        id: null,
+                        username: usernameCtrl.text.trim(),
+                        pin: pinCtrl.text,
+                        role: role,
+                        permissions: perms,
+                        isActive: true,
+                        createdAt: now,
+                        updatedAt: now,
+                      )));
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    } else {
+                      final user = AppUser(
+                        id: existing.id,
+                        username: usernameCtrl.text.trim(),
+                        pin: existing.pin,
+                        role: role,
+                        permissions: perms,
+                        isActive: existing.isActive,
+                        createdAt: existing.createdAt,
+                        updatedAt: now,
+                      );
+                      ctx.read<UserBloc>().add(UpdateUser(user));
+                      await SupabaseAuthService.instance.updateCloudUser(user);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    }
                   },
-                  child: Text(isEditing ? 'Update User' : 'Create User'),
+                  child: isSaving
+                      ? SizedBox(width: 20.w, height: 20.h, child: const CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Text(isEditing ? 'Update User' : 'Create User'),
                 ),
                 SizedBox(height: 20.h),
               ]),
@@ -327,8 +408,14 @@ class _UsersPageState extends State<UsersPage> {
     content: Text('Delete "${user.username}"? This cannot be undone.'),
     actions: [
       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-      TextButton(onPressed: () { ctx.read<UserBloc>().add(DeleteUserEvent(user.id!)); Navigator.pop(ctx); },
-          child: const Text('Delete', style: TextStyle(color: AppTheme.danger))),
+      TextButton(
+        onPressed: () {
+          if (user.id != null) ctx.read<UserBloc>().add(DeleteUserEvent(user.id!));
+          SupabaseAuthService.instance.deleteCloudUser(user.username);
+          Navigator.pop(ctx);
+        },
+        child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
+      ),
     ],
   ),
   );
@@ -348,9 +435,14 @@ class _UsersPageState extends State<UsersPage> {
         ElevatedButton(
           onPressed: () async {
             if (ctrl.text.length == 4 && ctrl.text == confirmCtrl.text) {
+              // Update locally (repo hashes it)
               ctx.read<UserBloc>().add(UpdateUser(user.copyWith(pin: ctrl.text)));
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('PIN changed!'), backgroundColor: AppTheme.accent));
+              // Update in Supabase
+              await SupabaseAuthService.instance.changeUserPin(user.username, ctrl.text);
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('PIN changed!'), backgroundColor: AppTheme.accent));
+              }
             }
           },
           child: const Text('Change'),
