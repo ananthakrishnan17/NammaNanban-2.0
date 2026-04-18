@@ -78,14 +78,14 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
       title: 'Profit & Loss Statement',
       headers: ['Item', 'Amount'],
       rows: [
-        ['Total Sales (Income)', CurrencyFormatter.format(_pl!['income'].toDouble())],
-        ['Less: Returns', CurrencyFormatter.format(_pl!['return_deductions'].toDouble())],
-        ['Net Sales', CurrencyFormatter.format(_pl!['net_sales'].toDouble())],
-        ['Cost of Goods Sold', CurrencyFormatter.format(_pl!['cogs'].toDouble())],
-        ['Gross Profit', CurrencyFormatter.format(_pl!['gross_profit'].toDouble())],
-        ['Operating Expenses', CurrencyFormatter.format(_pl!['expenses'].toDouble())],
-        ['Net Profit / Loss', CurrencyFormatter.format(_pl!['net_profit'].toDouble())],
-        ['Profit Margin', '${(_pl!['profit_margin'] as double).toStringAsFixed(1)}%'],
+        ['Total Sales (Income)', CurrencyFormatter.format((_pl!['income'] as num?)?.toDouble() ?? 0.0)],
+        ['Less: Returns', CurrencyFormatter.format((_pl!['return_deductions'] as num?)?.toDouble() ?? 0.0)],
+        ['Net Sales', CurrencyFormatter.format((_pl!['net_sales'] as num?)?.toDouble() ?? 0.0)],
+        ['Cost of Goods Sold', CurrencyFormatter.format((_pl!['cogs'] as num?)?.toDouble() ?? 0.0)],
+        ['Gross Profit', CurrencyFormatter.format((_pl!['gross_profit'] as num?)?.toDouble() ?? 0.0)],
+        ['Operating Expenses', CurrencyFormatter.format((_pl!['expenses'] as num?)?.toDouble() ?? 0.0)],
+        ['Net Profit / Loss', CurrencyFormatter.format((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0)],
+        ['Profit Margin', '${((_pl!['profit_margin'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1)}%'],
       ],
     );
   }
@@ -134,18 +134,18 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                           padding: EdgeInsets.all(16.w),
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             _sectionHeader('INCOME'),
-                            _plRow('Total Sales', _pl!['income'].toDouble(), color: AppTheme.accent),
-                            _plRow('Less: Returns', _pl!['return_deductions'].toDouble(), deduct: true),
-                            _totalRow('Net Sales', _pl!['net_sales'].toDouble()),
+                            _plRow('Total Sales', (_pl!['income'] as num?)?.toDouble() ?? 0.0, color: AppTheme.accent),
+                            _plRow('Less: Returns', (_pl!['return_deductions'] as num?)?.toDouble() ?? 0.0, deduct: true),
+                            _totalRow('Net Sales', (_pl!['net_sales'] as num?)?.toDouble() ?? 0.0),
                             SizedBox(height: 16.h),
 
                             _sectionHeader('COST OF GOODS SOLD'),
-                            _plRow('Purchase Cost (COGS)', _pl!['cogs'].toDouble(), deduct: true),
-                            _totalRow('Gross Profit', _pl!['gross_profit'].toDouble()),
+                            _plRow('Purchase Cost (COGS)', (_pl!['cogs'] as num?)?.toDouble() ?? 0.0, deduct: true),
+                            _totalRow('Gross Profit', (_pl!['gross_profit'] as num?)?.toDouble() ?? 0.0),
                             SizedBox(height: 16.h),
 
                             _sectionHeader('OPERATING EXPENSES'),
-                            _plRow('Total Expenses', _pl!['expenses'].toDouble(), deduct: true),
+                            _plRow('Total Expenses', (_pl!['expenses'] as num?)?.toDouble() ?? 0.0, deduct: true),
                             SizedBox(height: 16.h),
 
                             // Net Profit highlight
@@ -153,43 +153,43 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                               width: double.infinity,
                               padding: EdgeInsets.all(16.w),
                               decoration: BoxDecoration(
-                                color: (_pl!['net_profit'] as double) >= 0
+                                color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
                                     ? AppTheme.accent.withOpacity(0.1)
                                     : AppTheme.danger.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(14.r),
                                 border: Border.all(
-                                  color: (_pl!['net_profit'] as double) >= 0
+                                  color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
                                       ? AppTheme.accent
                                       : AppTheme.danger,
                                 ),
                               ),
                               child: Column(children: [
                                 Text(
-                                  (_pl!['net_profit'] as double) >= 0 ? '🎯 NET PROFIT' : '⚠️ NET LOSS',
+                                  ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0 ? '🎯 NET PROFIT' : '⚠️ NET LOSS',
                                   style: TextStyle(
                                       fontSize: 12.sp,
                                       fontWeight: FontWeight.w700,
-                                      color: (_pl!['net_profit'] as double) >= 0
+                                      color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
                                           ? AppTheme.accent
                                           : AppTheme.danger,
                                       fontFamily: 'Poppins'),
                                 ),
                                 SizedBox(height: 4.h),
                                 Text(
-                                  CurrencyFormatter.format((_pl!['net_profit'] as double).abs()),
+                                  CurrencyFormatter.format(((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0).abs()),
                                   style: TextStyle(
                                       fontSize: 24.sp,
                                       fontWeight: FontWeight.w700,
-                                      color: (_pl!['net_profit'] as double) >= 0
+                                      color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
                                           ? AppTheme.accent
                                           : AppTheme.danger,
                                       fontFamily: 'Poppins'),
                                 ),
                                 SizedBox(height: 4.h),
                                 Text(
-                                  'Margin: ${(_pl!['profit_margin'] as double).toStringAsFixed(1)}%',
+                                  'Margin: ${((_pl!['profit_margin'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1)}%',
                                   style: AppTheme.caption.copyWith(
-                                      color: (_pl!['net_profit'] as double) >= 0
+                                      color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
                                           ? AppTheme.accent
                                           : AppTheme.danger),
                                 ),
