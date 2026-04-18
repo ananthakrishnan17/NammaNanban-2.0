@@ -11,28 +11,43 @@ class UsersPage extends StatefulWidget {
 }
 
 class _UsersPageState extends State<UsersPage> {
+  late Future<bool> _canAddMoreFuture;
+  late Future<int> _maxUsersFuture;
+  AppUser? _currentUser;
+
   @override
   void initState() {
     super.initState();
+    _currentUser = context.read<UserBloc>().currentUser;
+    _canAddMoreFuture = SupabaseAuthService.instance.canAddMoreUsers();
+    _maxUsersFuture = SupabaseAuthService.instance.getMaxAllowedUsers();
     context.read<UserBloc>().add(LoadCloudUsers());
+  }
+
+  void _refreshLimitFutures() {
+    setState(() {
+      _canAddMoreFuture = SupabaseAuthService.instance.canAddMoreUsers();
+      _maxUsersFuture = SupabaseAuthService.instance.getMaxAllowedUsers();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentUser = context.read<UserBloc>().currentUser;
-    final isAdmin = currentUser?.isAdmin == true;
+    return BlocConsumer<UserBloc, UserState>(
+      listenWhen: (_, curr) => curr is UserListLoaded,
+      listener: (_, __) => _refreshLimitFutures(),
+      builder: (context, state) {
+        final isAdmin = _currentUser?.isAdmin == true;
+        final users = state is UserListLoaded ? state.users : <AppUser>[];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('User Management'),
-        actions: [
-          FutureBuilder<int>(
-            future: SupabaseAuthService.instance.getMaxAllowedUsers(),
-            builder: (_, snap) {
-              if (!snap.hasData) return const SizedBox.shrink();
-              return BlocBuilder<UserBloc, UserState>(
-                builder: (_, state) {
-                  final users = state is UserListLoaded ? state.users : <AppUser>[];
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('User Management'),
+            actions: [
+              FutureBuilder<int>(
+                future: _maxUsersFuture,
+                builder: (_, snap) {
+                  if (!snap.hasData) return const SizedBox.shrink();
                   return Padding(
                     padding: EdgeInsets.only(right: 16.w),
                     child: Center(
@@ -43,42 +58,63 @@ class _UsersPageState extends State<UsersPage> {
                     ),
                   );
                 },
-              );
-            },
+              ),
+            ],
           ),
-        ],
-      ),
-      floatingActionButton: isAdmin
-          ? FloatingActionButton.extended(
-              onPressed: () => _showUserForm(context, null),
-              backgroundColor: AppTheme.primary,
-              icon: const Icon(Icons.person_add, color: Colors.white),
-              label: const Text('Add User', style: TextStyle(color: Colors.white)),
-            )
-          : null,
-      body: BlocBuilder<UserBloc, UserState>(
-        builder: (ctx, state) {
-          if (state is UserLoading) return const Center(child: CircularProgressIndicator());
-          final users = state is UserListLoaded ? state.users : <AppUser>[];
+          floatingActionButton: isAdmin
+              ? FutureBuilder<bool>(
+                  future: _canAddMoreFuture,
+                  builder: (_, snap) {
+                    final canAdd = snap.data ?? false;
+                    return FloatingActionButton.extended(
+                      onPressed: canAdd
+                          ? () => _showUserForm(context, null)
+                          : () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'User limit reached for your license. Cannot add more users.',
+                                    style: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp),
+                                  ),
+                                  backgroundColor: AppTheme.danger,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
+                      backgroundColor: canAdd ? AppTheme.primary : AppTheme.textSecondary,
+                      icon: Icon(canAdd ? Icons.person_add : Icons.person_off, color: Colors.white),
+                      label: Text(
+                        canAdd ? 'Add User' : 'Limit Reached',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    );
+                  },
+                )
+              : null,
+          body: _buildBody(context, state, users, isAdmin),
+        );
+      },
+    );
+  }
 
-          if (users.isEmpty) {
-            return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text('👥', style: TextStyle(fontSize: 56.sp)),
-              SizedBox(height: 16.h),
-              Text('No users yet', style: AppTheme.heading2),
-              SizedBox(height: 8.h),
-              Text('Tap + to create your first user', style: AppTheme.caption),
-            ]));
-          }
+  Widget _buildBody(BuildContext context, UserState state, List<AppUser> users, bool isAdmin) {
+    if (state is UserLoading) return const Center(child: CircularProgressIndicator());
 
-          return ListView.separated(
-            padding: EdgeInsets.all(14.w),
-            itemCount: users.length,
-            separatorBuilder: (_, __) => SizedBox(height: 10.h),
-            itemBuilder: (ctx, i) => _userTile(ctx, users[i]),
-          );
-        },
-      ),
+    if (users.isEmpty) {
+      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text('👥', style: TextStyle(fontSize: 56.sp)),
+        SizedBox(height: 16.h),
+        Text('No users yet', style: AppTheme.heading2),
+        SizedBox(height: 8.h),
+        Text(isAdmin ? 'Tap + to create your first user' : 'No users available', style: AppTheme.caption),
+      ]));
+    }
+
+    return ListView.separated(
+      padding: EdgeInsets.all(14.w),
+      itemCount: users.length,
+      separatorBuilder: (_, __) => SizedBox(height: 10.h),
+      itemBuilder: (ctx, i) => _userTile(ctx, users[i]),
     );
   }
 
