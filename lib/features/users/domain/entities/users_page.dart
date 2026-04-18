@@ -14,7 +14,7 @@ class _UsersPageState extends State<UsersPage> {
   @override
   void initState() {
     super.initState();
-    context.read<UserBloc>().add(LoadUsers());
+    context.read<UserBloc>().add(LoadCloudUsers());
   }
 
   @override
@@ -141,9 +141,13 @@ class _UsersPageState extends State<UsersPage> {
             // Actions menu (admin only)
             if (isAdmin)
               PopupMenuButton<String>(
-                onSelected: (v) {
+                onSelected: (v) async {
                   if (v == 'edit') _showUserForm(ctx, user);
-                  if (v == 'toggle') ctx.read<UserBloc>().add(ToggleUserActive(user.id!, !user.isActive));
+                  if (v == 'toggle') {
+                    final updated = user.copyWith(isActive: !user.isActive);
+                    await SupabaseAuthService.instance.updateCloudUser(updated);
+                    if (ctx.mounted) ctx.read<UserBloc>().add(LoadCloudUsers());
+                  }
                   if (v == 'delete' && !isCurrentUser) _confirmDelete(ctx, user);
                   if (v == 'change_pin') _showChangePinDialog(ctx, user);
                 },
@@ -329,9 +333,10 @@ class _UsersPageState extends State<UsersPage> {
                         setSt(() { saveError = result.error; isSaving = false; });
                         return;
                       }
-                      // Sync to local DB
-                      ctx.read<UserBloc>().add(CreateUser(newUser));
-                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (ctx.mounted) {
+                        ctx.read<UserBloc>().add(LoadCloudUsers());
+                        Navigator.pop(ctx);
+                      }
                     } else {
                       final user = AppUser(
                         id: existing.id,
@@ -349,8 +354,10 @@ class _UsersPageState extends State<UsersPage> {
                         setSt(() { saveError = 'Failed to update user in cloud. Please try again.'; isSaving = false; });
                         return;
                       }
-                      ctx.read<UserBloc>().add(UpdateUser(user));
-                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (ctx.mounted) {
+                        ctx.read<UserBloc>().add(LoadCloudUsers());
+                        Navigator.pop(ctx);
+                      }
                     }
                   },
                   child: isSaving
@@ -409,8 +416,8 @@ class _UsersPageState extends State<UsersPage> {
         onPressed: () async {
           Navigator.pop(ctx);
           final deleted = await SupabaseAuthService.instance.deleteCloudUser(user.username);
-          if (deleted && user.id != null && ctx.mounted) {
-            ctx.read<UserBloc>().add(DeleteUserEvent(user.id!));
+          if (deleted && ctx.mounted) {
+            ctx.read<UserBloc>().add(LoadCloudUsers());
           } else if (!deleted && ctx.mounted) {
             ScaffoldMessenger.of(ctx).showSnackBar(
               const SnackBar(content: Text('Failed to delete user. Please try again.'), backgroundColor: AppTheme.danger),

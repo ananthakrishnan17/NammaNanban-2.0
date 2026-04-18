@@ -50,6 +50,7 @@ class SupabaseAuthService {
   static const _kExpiresAt = 'sb_expires_at';
   static const _kCompanyName = 'sb_company_name';
   static const _kLastSync = 'sb_last_sync';
+  static const _kMaxUsers = 'sb_max_users';
 
   // ── License Verification ──────────────────────────────────────────────────
   /// Verify license key against Supabase `licenses` table
@@ -88,6 +89,7 @@ class SupabaseAuthService {
       await prefs.setString(_kPlan, plan.value);
       await prefs.setString(_kExpiresAt, expiresAt.toIso8601String());
       await prefs.setString(_kCompanyName, response['company_name'] as String? ?? '');
+      await prefs.setInt(_kMaxUsers, (response['max_users'] as int?) ?? plan.maxUsers);
 
       return LicenseVerifyResult(
         success: true,
@@ -160,14 +162,13 @@ class SupabaseAuthService {
       final lid = await licenseId;
       if (lid == null) return (success: false, error: 'No license found');
 
-      // Check user limit for plan
-      final plan = await currentPlan;
+      // Check user limit from license
+      final maxUsers = await getMaxAllowedUsers();
       final existingUsers = await fetchCloudUsers();
-      if (existingUsers.length >= plan.maxUsers) {
+      if (existingUsers.length >= maxUsers) {
         return (
         success: false,
-        error: 'User limit reached for ${plan.label} plan (${plan.maxUsers} users max).\n'
-            'Upgrade to ${plan == SupabasePlan.basic ? "Standard" : "Enterprise"} plan to add more users.',
+        error: 'User limit reached ($maxUsers users max for your license).',
         );
       }
 
@@ -284,16 +285,19 @@ class SupabaseAuthService {
 
   // ── Plan Check ────────────────────────────────────────────────────────────
   Future<int> getMaxAllowedUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getInt(_kMaxUsers);
+    if (stored != null) return stored;
     final plan = await currentPlan;
-    return plan.maxUsers;
+    return plan.maxUsers; // fallback
   }
 
   Future<bool> canAddMoreUsers() async {
     final lid = await licenseId;
     if (lid == null) return false;
-    final plan = await currentPlan;
+    final max = await getMaxAllowedUsers();
     final users = await fetchCloudUsers();
-    return users.length < plan.maxUsers;
+    return users.length < max;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
