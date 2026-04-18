@@ -23,6 +23,20 @@ class _FirstAdminSetupScreenState extends State<FirstAdminSetupScreen> {
   String? _error;
   String? _usernameError;
   String? _pinError;
+  String? _companyName;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCompanyName();
+  }
+
+  Future<void> _loadCompanyName() async {
+    final cached = await SupabaseAuthService.instance.getCachedLicense();
+    if (mounted) {
+      setState(() => _companyName = cached?.companyName);
+    }
+  }
 
   @override
   void dispose() {
@@ -91,7 +105,7 @@ class _FirstAdminSetupScreenState extends State<FirstAdminSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cachedLicense = SupabaseAuthService.instance.getCachedLicense();
+    final company = _companyName ?? 'your shop';
 
     return Scaffold(
       backgroundColor: const Color(0xFF2D3250),
@@ -110,16 +124,10 @@ class _FirstAdminSetupScreenState extends State<FirstAdminSetupScreen> {
                 style: TextStyle(fontSize: 22.sp, fontWeight: FontWeight.w700, color: Colors.white, fontFamily: 'Poppins'),
                 textAlign: TextAlign.center),
             SizedBox(height: 6.h),
-            FutureBuilder<LicenseVerifyResult?>(
-              future: cachedLicense,
-              builder: (_, snap) {
-                final company = snap.data?.companyName ?? 'your shop';
-                return Text(
-                  'You are the first user for $company.\nCreate your admin account to get started.',
-                  style: TextStyle(fontSize: 13.sp, color: Colors.white60, fontFamily: 'Poppins', height: 1.5),
-                  textAlign: TextAlign.center,
-                );
-              },
+            Text(
+              'You are the first user for $company.\nCreate your admin account to get started.',
+              style: TextStyle(fontSize: 13.sp, color: Colors.white60, fontFamily: 'Poppins', height: 1.5),
+              textAlign: TextAlign.center,
             ),
             SizedBox(height: 36.h),
             Container(

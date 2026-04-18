@@ -314,7 +314,7 @@ class _UsersPageState extends State<UsersPage> {
 
                     if (!isEditing) {
                       setSt(() { isSaving = true; saveError = null; });
-                      final result = await SupabaseAuthService.instance.createCloudUser(AppUser(
+                      final newUser = AppUser(
                         id: null,
                         username: usernameCtrl.text.trim(),
                         pin: pinCtrl.text,
@@ -323,22 +323,14 @@ class _UsersPageState extends State<UsersPage> {
                         isActive: true,
                         createdAt: now,
                         updatedAt: now,
-                      ));
+                      );
+                      final result = await SupabaseAuthService.instance.createCloudUser(newUser);
                       if (!result.success) {
                         setSt(() { saveError = result.error; isSaving = false; });
                         return;
                       }
                       // Sync to local DB
-                      ctx.read<UserBloc>().add(CreateUser(AppUser(
-                        id: null,
-                        username: usernameCtrl.text.trim(),
-                        pin: pinCtrl.text,
-                        role: role,
-                        permissions: perms,
-                        isActive: true,
-                        createdAt: now,
-                        updatedAt: now,
-                      )));
+                      ctx.read<UserBloc>().add(CreateUser(newUser));
                       if (ctx.mounted) Navigator.pop(ctx);
                     } else {
                       final user = AppUser(
@@ -409,10 +401,16 @@ class _UsersPageState extends State<UsersPage> {
     actions: [
       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
       TextButton(
-        onPressed: () {
-          if (user.id != null) ctx.read<UserBloc>().add(DeleteUserEvent(user.id!));
-          SupabaseAuthService.instance.deleteCloudUser(user.username);
+        onPressed: () async {
           Navigator.pop(ctx);
+          final deleted = await SupabaseAuthService.instance.deleteCloudUser(user.username);
+          if (deleted && user.id != null && ctx.mounted) {
+            ctx.read<UserBloc>().add(DeleteUserEvent(user.id!));
+          } else if (!deleted && ctx.mounted) {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+              const SnackBar(content: Text('Failed to delete user. Please try again.'), backgroundColor: AppTheme.danger),
+            );
+          }
         },
         child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
       ),
