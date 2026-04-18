@@ -78,7 +78,7 @@ class HeldBillRepository {
     return await db.transaction((txn) async {
       final heldId = await txn.insert('held_bills', {
         'hold_name': holdName ?? 'Bill ${now.hour}:${now.minute.toString().padLeft(2,'0')}',
-        'bill_type': cart.billType.value, 'customer_id': null, 'customer_name': cart.customerName,
+        'bill_type': cart.billType.name, 'customer_id': null, 'customer_name': cart.customerName,
         'discount_amount': cart.discountAmount, 'payment_mode': cart.paymentMode,
         'created_at': now.toIso8601String(),
       });
