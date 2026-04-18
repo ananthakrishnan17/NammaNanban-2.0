@@ -343,8 +343,13 @@ class _UsersPageState extends State<UsersPage> {
                         createdAt: existing.createdAt,
                         updatedAt: now,
                       );
+                      setSt(() { isSaving = true; saveError = null; });
+                      final cloudUpdated = await SupabaseAuthService.instance.updateCloudUser(user);
+                      if (!cloudUpdated) {
+                        setSt(() { saveError = 'Failed to update user in cloud. Please try again.'; isSaving = false; });
+                        return;
+                      }
                       ctx.read<UserBloc>().add(UpdateUser(user));
-                      await SupabaseAuthService.instance.updateCloudUser(user);
                       if (ctx.mounted) Navigator.pop(ctx);
                     }
                   },
@@ -433,13 +438,16 @@ class _UsersPageState extends State<UsersPage> {
         ElevatedButton(
           onPressed: () async {
             if (ctrl.text.length == 4 && ctrl.text == confirmCtrl.text) {
-              // Update locally (repo hashes it)
-              ctx.read<UserBloc>().add(UpdateUser(user.copyWith(pin: ctrl.text)));
-              // Update in Supabase
-              await SupabaseAuthService.instance.changeUserPin(user.username, ctrl.text);
-              if (ctx.mounted) {
+              // Update in Supabase first
+              final changed = await SupabaseAuthService.instance.changeUserPin(user.username, ctrl.text);
+              if (!ctx.mounted) return;
+              if (changed) {
+                // Update locally only if cloud succeeded (repo hashes it)
+                ctx.read<UserBloc>().add(UpdateUser(user.copyWith(pin: ctrl.text)));
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('PIN changed!'), backgroundColor: AppTheme.accent));
+              } else {
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Failed to change PIN. Please try again.'), backgroundColor: AppTheme.danger));
               }
             }
           },
