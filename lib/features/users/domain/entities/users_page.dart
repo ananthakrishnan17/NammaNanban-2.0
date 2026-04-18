@@ -65,7 +65,7 @@ class _UsersPageState extends State<UsersPage> {
               ? FutureBuilder<bool>(
                   future: _canAddMoreFuture,
                   builder: (_, snap) {
-                    final canAdd = snap.data ?? false;
+                    final canAdd = snap.data ?? true;
                     return FloatingActionButton.extended(
                       onPressed: canAdd
                           ? () => _showUserForm(context, null)

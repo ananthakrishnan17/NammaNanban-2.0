@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/l10n/app_localizations.dart';
+import '../../../../core/supabase/supabase_auth_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../auth/presentation/pages/login_screen.dart';
 import '../../../auth/presentation/pages/set_pin_screen.dart';
@@ -12,6 +14,8 @@ import '../../../purchase/presentation/pages/add_purchase_page.dart';
 import '../../../sale_return/presentation/pages/sale_return_page.dart';
 import '../../../subscription/services/subscription_service.dart';
 import '../../../subscription/presentation/pages/subscription_lock_screen.dart';
+import '../../../users/domain/entities/app_user.dart';
+import '../../../users/domain/entities/users_page.dart';
 import 'language_settings_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -42,6 +46,8 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final lang = AppLocalizations.instance;
+    final currentUser = context.read<UserBloc>().currentUser;
+    final isAdmin = currentUser?.isAdmin == true;
     return Scaffold(
       appBar: AppBar(title: Text(lang.t('settings')),
           actions: [IconButton(onPressed: () => _logout(context), icon: const Icon(Icons.logout, color: AppTheme.danger), tooltip: lang.t('logout'))]),
@@ -102,6 +108,29 @@ class _SettingsPageState extends State<SettingsPage> {
           _card([_tile(Icons.bluetooth, AppTheme.primary, 'Bluetooth Printer Setup', 'Connect & test thermal printer', null,
                   () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsPage())))]),
           SizedBox(height: 16.h),
+
+          // User Management (admin only)
+          if (isAdmin) ...[
+            _head('👥  User Management'),
+            FutureBuilder<({int current, int max})>(
+              future: _loadUserStats(),
+              builder: (_, snap) {
+                final current = snap.data?.current ?? 0;
+                final max = snap.data?.max ?? 0;
+                return _card([
+                  _tile(
+                    Icons.manage_accounts,
+                    AppTheme.primary,
+                    'Manage Users',
+                    snap.hasData ? '$current / $max users' : 'Loading...',
+                    null,
+                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersPage())).then((_) => setState(() {})),
+                  ),
+                ]);
+              },
+            ),
+            SizedBox(height: 16.h),
+          ],
 
           // Security
           _head('🔐  Security'),
@@ -167,6 +196,14 @@ class _SettingsPageState extends State<SettingsPage> {
       leading: Container(width: 36.w, height: 36.h, decoration: BoxDecoration(color: ic.withOpacity(0.1), borderRadius: BorderRadius.circular(8.r)), child: Icon(icon, color: ic, size: 18.sp)),
       title: Text(title, style: AppTheme.body), subtitle: sub != null ? Text(sub, style: AppTheme.caption) : null,
       trailing: trailing ?? Icon(Icons.chevron_right, color: AppTheme.textSecondary, size: 18.sp), onTap: onTap);
+
+  Future<({int current, int max})> _loadUserStats() async {
+    final (users, max) = await (
+      SupabaseAuthService.instance.fetchCloudUsers(),
+      SupabaseAuthService.instance.getMaxAllowedUsers(),
+    ).wait;
+    return (current: users.length, max: max);
+  }
 
   void _logout(BuildContext ctx) => showDialog(context: ctx, builder: (_) => AlertDialog(
     title: const Text('Logout?'), content: const Text('Return to PIN screen.'),
