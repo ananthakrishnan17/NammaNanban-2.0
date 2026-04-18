@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 7,
+    return await openDatabase(path, version: 8,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -157,7 +157,7 @@ class DatabaseHelper {
 
     await db.execute('''CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT,
       category TEXT NOT NULL, description TEXT, amount REAL NOT NULL,
-      date TEXT NOT NULL, created_at TEXT NOT NULL)''');
+      date TEXT NOT NULL, created_at TEXT NOT NULL, is_raw_material INTEGER DEFAULT 0)''');
 
     await db.execute('''CREATE TABLE stock_adjustments (id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL, adjustment_type TEXT NOT NULL, quantity REAL NOT NULL,
@@ -258,6 +258,9 @@ class DatabaseHelper {
           created_at TEXT NOT NULL,
           FOREIGN KEY (customer_id) REFERENCES customers (id))''');
       } catch (_) {}
+    }
+    if (oldVersion < 8) {
+      try { await db.execute('ALTER TABLE expenses ADD COLUMN is_raw_material INTEGER DEFAULT 0'); } catch (_) {}
     }
     await _seed(db, now);
   }
