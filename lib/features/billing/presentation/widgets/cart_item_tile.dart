@@ -66,6 +66,14 @@ class CartItemTile extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (item.conversionQty != 1.0) ...[
+                  SizedBox(height: 2.h),
+                  Text(
+                    '= ${(item.quantity * item.conversionQty).toStringAsFixed(2)} ${item.unit.replaceAll(RegExp(r'\(.*\)'), '').trim()} base',
+                    style: AppTheme.caption.copyWith(
+                        color: AppTheme.accent, fontSize: 10.sp),
+                  ),
+                ],
                 SizedBox(height: 4.h),
                 Text(
                   CurrencyFormatter.format(total),

@@ -18,17 +18,19 @@ class AddToCart extends BillingEvent {
 
 class RemoveFromCart extends BillingEvent {
   final int productId;
-  RemoveFromCart(this.productId);
+  final int? saleUomId;
+  RemoveFromCart(this.productId, {this.saleUomId});
   @override
-  List<Object?> get props => [productId];
+  List<Object?> get props => [productId, saleUomId];
 }
 
 class UpdateCartItemQty extends BillingEvent {
   final int productId;
   final double quantity;
-  UpdateCartItemQty({required this.productId, required this.quantity});
+  final int? saleUomId;
+  UpdateCartItemQty({required this.productId, required this.quantity, this.saleUomId});
   @override
-  List<Object?> get props => [productId, quantity];
+  List<Object?> get props => [productId, quantity, saleUomId];
 }
 
 class UpdateOpenRatePrice extends BillingEvent {
@@ -201,7 +203,9 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
   }
 
   void _onAdd(AddToCart e, Emitter<CartState> emit) {
-    final idx = state.items.indexWhere((i) => i.productId == e.item.productId);
+    final idx = state.items.indexWhere(
+      (i) => i.productId == e.item.productId && i.saleUomId == e.item.saleUomId,
+    );
     final updated = List<CartItem>.from(state.items);
     if (idx >= 0) {
       updated[idx] = updated[idx].copyWith(quantity: updated[idx].quantity + 1);
@@ -213,20 +217,24 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
 
   void _onRemove(RemoveFromCart e, Emitter<CartState> emit) => emit(
     state.copyWith(
-        items: state.items
-            .where((i) => i.productId != e.productId)
-            .toList()),
+        items: state.items.where((i) =>
+          !(i.productId == e.productId &&
+            (e.saleUomId == null || i.saleUomId == e.saleUomId))
+        ).toList()),
   );
 
   void _onUpdateQty(UpdateCartItemQty e, Emitter<CartState> emit) {
     if (e.quantity <= 0) {
-      add(RemoveFromCart(e.productId));
+      add(RemoveFromCart(e.productId, saleUomId: e.saleUomId));
       return;
     }
     emit(state.copyWith(
       items: state.items
           .map((i) =>
-      i.productId == e.productId ? i.copyWith(quantity: e.quantity) : i)
+            (i.productId == e.productId &&
+             (e.saleUomId == null || i.saleUomId == e.saleUomId))
+              ? i.copyWith(quantity: e.quantity)
+              : i)
           .toList(),
     ));
   }

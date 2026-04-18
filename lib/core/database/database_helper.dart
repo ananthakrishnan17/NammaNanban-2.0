@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 5,
+    return await openDatabase(path, version: 6,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -115,6 +115,7 @@ class DatabaseHelper {
       quantity REAL NOT NULL, unit TEXT NOT NULL, unit_price REAL NOT NULL,
       purchase_price REAL NOT NULL DEFAULT 0.0, discount_amount REAL DEFAULT 0.0,
       gst_rate REAL DEFAULT 0.0, gst_amount REAL DEFAULT 0.0, total_price REAL NOT NULL,
+      sale_uom_id INTEGER DEFAULT NULL, conversion_qty REAL DEFAULT 1.0,
       FOREIGN KEY (bill_id) REFERENCES bills (id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products (id))''');
 
@@ -234,6 +235,10 @@ class DatabaseHelper {
           amount REAL NOT NULL,
           FOREIGN KEY (bill_id) REFERENCES bills (id) ON DELETE CASCADE)''');
       } catch (_) {}
+    }
+    if (oldVersion < 6) {
+      try { await db.execute('ALTER TABLE bill_items ADD COLUMN sale_uom_id INTEGER DEFAULT NULL'); } catch (_) {}
+      try { await db.execute('ALTER TABLE bill_items ADD COLUMN conversion_qty REAL DEFAULT 1.0'); } catch (_) {}
     }
     await _seed(db, now);
   }
