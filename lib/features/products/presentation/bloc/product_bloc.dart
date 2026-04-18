@@ -2,6 +2,7 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../domain/entities/product.dart';
 import '../../data/repositories/product_repository_impl.dart';
+import '../../../users/domain/entities/product_uom.dart';
 
 // ─── Events ───────────────────────────────────────────────────────────────────
 abstract class ProductEvent extends Equatable {
@@ -45,6 +46,29 @@ class DeleteCategoryEvent extends ProductEvent {
   @override List<Object?> get props => [id];
 }
 
+// ── UOM events ────────────────────────────────────────────────────────────────
+class LoadProductUoms extends ProductEvent {
+  final int productId;
+  LoadProductUoms(this.productId);
+  @override List<Object?> get props => [productId];
+}
+class AddProductUomEvent extends ProductEvent {
+  final ProductUom uom;
+  AddProductUomEvent(this.uom);
+  @override List<Object?> get props => [uom.productId, uom.uomId];
+}
+class UpdateProductUomEvent extends ProductEvent {
+  final ProductUom uom;
+  UpdateProductUomEvent(this.uom);
+  @override List<Object?> get props => [uom.id];
+}
+class DeleteProductUomEvent extends ProductEvent {
+  final int uomId;
+  final int productId;
+  DeleteProductUomEvent({required this.uomId, required this.productId});
+  @override List<Object?> get props => [uomId, productId];
+}
+
 // ─── States ───────────────────────────────────────────────────────────────────
 abstract class ProductState extends Equatable {
   @override List<Object?> get props => [];
@@ -58,23 +82,27 @@ class ProductsLoaded extends ProductState {
   final List<Category> categories;
   final int? selectedCategoryId;
   final String searchQuery;
+  final List<ProductUom> productUoms;
 
   ProductsLoaded({required this.products, required this.filteredProducts,
     required this.lowStockProducts, required this.categories,
-    this.selectedCategoryId, this.searchQuery = ''});
+    this.selectedCategoryId, this.searchQuery = '',
+    this.productUoms = const []});
 
   ProductsLoaded copyWith({List<Product>? products, List<Product>? filteredProducts,
     List<Product>? lowStockProducts, List<Category>? categories,
-    int? selectedCategoryId, String? searchQuery}) => ProductsLoaded(
+    int? selectedCategoryId, String? searchQuery,
+    List<ProductUom>? productUoms}) => ProductsLoaded(
     products: products ?? this.products,
     filteredProducts: filteredProducts ?? this.filteredProducts,
     lowStockProducts: lowStockProducts ?? this.lowStockProducts,
     categories: categories ?? this.categories,
     selectedCategoryId: selectedCategoryId ?? this.selectedCategoryId,
     searchQuery: searchQuery ?? this.searchQuery,
+    productUoms: productUoms ?? this.productUoms,
   );
 
-  @override List<Object?> get props => [products, filteredProducts, lowStockProducts, categories, selectedCategoryId, searchQuery];
+  @override List<Object?> get props => [products, filteredProducts, lowStockProducts, categories, selectedCategoryId, searchQuery, productUoms];
 }
 class ProductError extends ProductState {
   final String message; ProductError(this.message);
@@ -98,6 +126,10 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
     on<FilterByCategory>(_onFilterByCategory);
     on<AddCategoryEvent>(_onAddCategory);
     on<DeleteCategoryEvent>(_onDeleteCategory);
+    on<LoadProductUoms>(_onLoadProductUoms);
+    on<AddProductUomEvent>(_onAddProductUom);
+    on<UpdateProductUomEvent>(_onUpdateProductUom);
+    on<DeleteProductUomEvent>(_onDeleteProductUom);
   }
 
   Future<void> _onLoadProducts(LoadProducts event, Emitter<ProductState> emit) async {
@@ -165,5 +197,35 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
   Future<void> _onDeleteCategory(DeleteCategoryEvent event, Emitter<ProductState> emit) async {
     try { await _repository.deleteCategory(event.id); add(LoadProducts()); }
     catch (e) { emit(ProductError(e.toString())); }
+  }
+
+  // ── UOM handlers ──────────────────────────────────────────────────────────
+  Future<void> _onLoadProductUoms(LoadProductUoms event, Emitter<ProductState> emit) async {
+    if (state is! ProductsLoaded) return;
+    try {
+      final uoms = await _repository.getProductUoms(event.productId);
+      emit((state as ProductsLoaded).copyWith(productUoms: uoms));
+    } catch (e) { emit(ProductError(e.toString())); }
+  }
+
+  Future<void> _onAddProductUom(AddProductUomEvent event, Emitter<ProductState> emit) async {
+    try {
+      await _repository.addProductUom(event.uom);
+      add(LoadProductUoms(event.uom.productId));
+    } catch (e) { emit(ProductError(e.toString())); }
+  }
+
+  Future<void> _onUpdateProductUom(UpdateProductUomEvent event, Emitter<ProductState> emit) async {
+    try {
+      await _repository.updateProductUom(event.uom);
+      add(LoadProductUoms(event.uom.productId));
+    } catch (e) { emit(ProductError(e.toString())); }
+  }
+
+  Future<void> _onDeleteProductUom(DeleteProductUomEvent event, Emitter<ProductState> emit) async {
+    try {
+      await _repository.deleteProductUom(event.uomId);
+      add(LoadProductUoms(event.productId));
+    } catch (e) { emit(ProductError(e.toString())); }
   }
 }

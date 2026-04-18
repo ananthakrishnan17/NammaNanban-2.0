@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../printer/services/printer_service.dart';
+import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../domain/entities/bill.dart';
@@ -12,6 +14,7 @@ import '../bloc/billing_bloc.dart';
 import '../widgets/cart_item_tile.dart';
 import '../widgets/product_grid_item.dart';
 import '../widgets/payment_bottom_sheet.dart';
+import '../widgets/uom_picker_sheet.dart';
 import 'held_bills_page.dart';
 import 'split_bill_page.dart';
 
@@ -420,14 +423,36 @@ class _BillingScreenState extends State<BillingScreen> {
                       return ProductGridItem(
                         product: product,
                         billType: billType,
-                        onTap: () {
-                          if (!product.isOutOfStock) {
+                        onTap: () async {
+                          if (product.isOutOfStock) {
+                            _showOutOfStockSnack(product.name);
+                            return;
+                          }
+                          final uoms = await ProductRepositoryImpl(
+                                  DatabaseHelper.instance)
+                              .getProductUoms(product.id!);
+                          if (!mounted) return;
+                          if (uoms.isEmpty) {
                             context
                                 .read<BillingBloc>()
                                 .add(AddToCart(_toCartItem(product)));
                             _showAddedFeedback(product.name);
                           } else {
-                            _showOutOfStockSnack(product.name);
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(24.r))),
+                              builder: (_) => BlocProvider.value(
+                                value: context.read<BillingBloc>(),
+                                child: UomPickerSheet(
+                                  product: product,
+                                  uoms: uoms,
+                                ),
+                              ),
+                            );
                           }
                         },
                       );
@@ -541,14 +566,17 @@ class _BillingScreenState extends State<BillingScreen> {
                       onIncrease: () => context.read<BillingBloc>().add(
                           UpdateCartItemQty(
                               productId: item.productId,
-                              quantity: item.quantity + 1)),
+                              quantity: item.quantity + 1,
+                              saleUomId: item.saleUomId)),
                       onDecrease: () => context.read<BillingBloc>().add(
                           UpdateCartItemQty(
                               productId: item.productId,
-                              quantity: item.quantity - 1)),
+                              quantity: item.quantity - 1,
+                              saleUomId: item.saleUomId)),
                       onRemove: () => context
                           .read<BillingBloc>()
-                          .add(RemoveFromCart(item.productId)),
+                          .add(RemoveFromCart(item.productId,
+                              saleUomId: item.saleUomId)),
                     );
                   },
                 ),

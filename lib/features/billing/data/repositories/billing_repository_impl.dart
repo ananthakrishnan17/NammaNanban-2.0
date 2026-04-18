@@ -87,11 +87,14 @@ class BillingRepositoryImpl implements BillingRepository {
           'unit': cartItem.unit, 'unit_price': effectivePrice,
           'purchase_price': cartItem.purchasePrice,
           'gst_rate': cartItem.gstRate, 'gst_amount': gstAmt, 'total_price': itemTotal,
+          'sale_uom_id': cartItem.saleUomId,
+          'conversion_qty': cartItem.conversionQty,
         });
-        // Deduct stock
+        // Deduct stock — use base-unit equivalent (qty × conversionQty)
+        final baseQtyToDeduct = cartItem.quantity * cartItem.conversionQty;
         await txn.rawUpdate(
             'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
-            [cartItem.quantity, now.toIso8601String(), cartItem.productId]);
+            [baseQtyToDeduct, now.toIso8601String(), cartItem.productId]);
 
         billItems.add(BillItem(id: itemId, billId: billId, productId: cartItem.productId,
             productName: cartItem.productName, quantity: cartItem.quantity, unit: cartItem.unit,

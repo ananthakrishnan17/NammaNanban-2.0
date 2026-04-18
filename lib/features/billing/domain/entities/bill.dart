@@ -1,10 +1,6 @@
 import 'package:equatable/equatable.dart';
 import '../../../products/domain/entities/product.dart';
 
-
-
-import 'package:equatable/equatable.dart';
-
 enum BillType { retail, wholesale }
 extension BillTypeExt on BillType {
   String get value => name;
@@ -24,12 +20,16 @@ class CartItem extends Equatable {
   final String rateType; // 'fixed' | 'open'
   final double quantity;
   final double? overridePrice; // for open rate
+  final int? saleUomId;           // null = base unit sale
+  final String? saleUomShortName;
+  final double conversionQty;     // base units per sale unit, default 1.0
 
   const CartItem({
     required this.productId, required this.productName, required this.unit,
     required this.sellingPrice, required this.wholesalePrice,
     required this.purchasePrice, this.gstRate = 0, this.gstInclusive = true,
     this.rateType = 'fixed', required this.quantity, this.overridePrice,
+    this.saleUomId, this.saleUomShortName, this.conversionQty = 1.0,
   });
 
   double effectivePrice(BillType billType) {
@@ -38,7 +38,8 @@ class CartItem extends Equatable {
   }
 
   double totalFor(BillType billType) => effectivePrice(billType) * quantity;
-  double profitFor(BillType billType) => (effectivePrice(billType) - purchasePrice) * quantity;
+  double profitFor(BillType billType) =>
+      (effectivePrice(billType) - purchasePrice * conversionQty) * quantity;
   double gstAmountFor(BillType billType) {
     if (gstRate <= 0) return 0;
     final t = totalFor(billType);
@@ -51,9 +52,10 @@ class CartItem extends Equatable {
     sellingPrice: sellingPrice, wholesalePrice: wholesalePrice, purchasePrice: purchasePrice,
     gstRate: gstRate, gstInclusive: gstInclusive, rateType: rateType,
     quantity: quantity ?? this.quantity, overridePrice: overridePrice ?? this.overridePrice,
+    saleUomId: saleUomId, saleUomShortName: saleUomShortName, conversionQty: conversionQty,
   );
 
-  @override List<Object?> get props => [productId, quantity, overridePrice];
+  @override List<Object?> get props => [productId, saleUomId, quantity, overridePrice];
 }
 
 class BillItem extends Equatable {

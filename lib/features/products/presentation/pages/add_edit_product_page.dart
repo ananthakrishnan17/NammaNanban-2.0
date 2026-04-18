@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/gst_calculator.dart';
 import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
+import '../../../users/domain/entities/product_uom.dart';
+import '../../../users/domain/entities/multi_uom_editor.dart';
 import '../../domain/entities/product.dart';
 import '../bloc/product_bloc.dart';
 import '../../../../shared/widgets/searchable_dropdown_with_add.dart';
@@ -25,6 +28,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   bool _gstInclusive = true;
   String _rateType = 'fixed';
   bool _isActive = true;
+  List<ProductUom> _pendingUoms = [];
   bool get isEditing => widget.product != null;
 
   @override void initState() {
@@ -42,7 +46,12 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _gstInclusive = p?.gstInclusive ?? true;
     _rateType = p?.rateType ?? 'fixed';
     _isActive = p?.isActive ?? true;
-    WidgetsBinding.instance.addPostFrameCallback((_) { context.read<MastersBloc>().add(LoadAllMasters()); });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<MastersBloc>().add(LoadAllMasters());
+      if (isEditing && widget.product!.id != null) {
+        context.read<ProductBloc>().add(LoadProductUoms(widget.product!.id!));
+      }
+    });
   }
 
   @override void dispose() {
@@ -69,8 +78,15 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       hsnCode: _hsnCtrl.text.isEmpty ? null : _hsnCtrl.text,
       isActive: _isActive, createdAt: widget.product?.createdAt ?? now, updatedAt: now,
     );
-    if (isEditing) context.read<ProductBloc>().add(UpdateProduct(p));
-    else context.read<ProductBloc>().add(AddProduct(p));
+    if (isEditing) {
+      context.read<ProductBloc>().add(UpdateProduct(p));
+      if (_pendingUoms.isNotEmpty) {
+        final uomRepo = ProductUomRepository(DatabaseHelper.instance);
+        uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
+      }
+    } else {
+      context.read<ProductBloc>().add(AddProduct(p));
+    }
     Navigator.pop(context);
   }
 
@@ -240,6 +256,42 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 child: Row(children: [Expanded(child: Text('Active Product', style: AppTheme.body)), Switch(value: _isActive, onChanged: (v) => setState(() => _isActive = v), activeColor: AppTheme.primary)]),
               ),
               SizedBox(height: 24.h),
+
+              // ── Sale Units (Loose Sale) ───────────────────────────────────
+              _sec('📏 Sale Units (Loose Sale)'),
+              if (!isEditing)
+                Container(
+                  padding: EdgeInsets.all(14.w),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(12.r),
+                    border: Border.all(color: AppTheme.divider),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.info_outline, color: AppTheme.textSecondary, size: 18.sp),
+                    SizedBox(width: 8.w),
+                    Expanded(child: Text(
+                      'Save the product first to configure loose sale units.',
+                      style: AppTheme.caption,
+                    )),
+                  ]),
+                )
+              else ...[
+                Builder(builder: (ctx) {
+                  final existingUoms = productState is ProductsLoaded
+                      ? productState.productUoms
+                      : const <ProductUom>[];
+                  return MultiUomEditor(
+                    key: ValueKey('uoms_${existingUoms.length}'),
+                    productId: widget.product!.id!,
+                    availableUnits: units,
+                    initialUoms: existingUoms,
+                    onChanged: (uoms) => setState(() => _pendingUoms = uoms),
+                  );
+                }),
+              ],
+              SizedBox(height: 24.h),
+
               ElevatedButton(onPressed: _save, child: Text(isEditing ? 'Update Product' : 'Add Product')),
               SizedBox(height: 40.h),
             ])),
