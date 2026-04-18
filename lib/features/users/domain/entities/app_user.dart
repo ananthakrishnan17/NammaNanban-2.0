@@ -3,6 +3,7 @@ import 'package:bloc/bloc.dart';
 import 'package:crypto/crypto.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/supabase/supabase_auth_service.dart';
 
 // ─── User Roles ────────────────────────────────────────────────────────────────
 enum UserRole { admin, user }
@@ -223,6 +224,7 @@ abstract class UserEvent extends Equatable {
   @override List<Object?> get props => [];
 }
 class LoadUsers extends UserEvent {}
+class LoadCloudUsers extends UserEvent {}
 class CreateUser extends UserEvent {
   final AppUser user; CreateUser(this.user);
   @override List<Object?> get props => [user.username];
@@ -284,6 +286,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
 
   UserBloc(this._repo) : super(UserInitial()) {
     on<LoadUsers>(_onLoad);
+    on<LoadCloudUsers>(_onLoadCloud);
     on<CreateUser>(_onCreate);
     on<UpdateUser>(_onUpdate);
     on<DeleteUserEvent>(_onDelete);
@@ -296,6 +299,14 @@ class UserBloc extends Bloc<UserEvent, UserState> {
     emit(UserLoading());
     try {
       final users = await _repo.getAllUsers();
+      emit(UserListLoaded(users));
+    } catch (err) { emit(UserError(err.toString())); }
+  }
+
+  Future<void> _onLoadCloud(LoadCloudUsers e, Emitter<UserState> emit) async {
+    emit(UserLoading());
+    try {
+      final users = await SupabaseAuthService.instance.fetchCloudUsers();
       emit(UserListLoaded(users));
     } catch (err) { emit(UserError(err.toString())); }
   }
