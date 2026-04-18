@@ -69,8 +69,8 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
   double get _splitTotal =>
       _splitEntries.fold(0.0, (s, e) => s + e.amount);
 
-  bool get _isSplitBalanced =>
-      (_splitTotal - widget.cart.totalAmount).abs() <= 0.01;
+  bool _isSplitBalanced(double totalAmount) =>
+      (_splitTotal - totalAmount).abs() <= 0.01;
 
   @override
   Widget build(BuildContext context) {
@@ -473,7 +473,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
                   height: 52.h,
                   child: ElevatedButton(
                     // ✅ Disable while saving or split not balanced
-                    onPressed: isSaving || (_isSplitMode && !_isSplitBalanced)
+                    onPressed: isSaving || (_isSplitMode && !_isSplitBalanced(cart.totalAmount))
                         ? null
                         : () {
                       if (_isSplitMode) {
