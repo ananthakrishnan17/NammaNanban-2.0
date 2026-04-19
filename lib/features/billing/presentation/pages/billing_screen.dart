@@ -10,6 +10,7 @@ import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../domain/entities/bill.dart';
+import '../../domain/entities/sale_type.dart';
 import '../bloc/billing_bloc.dart';
 import '../widgets/cart_item_tile.dart';
 import '../widgets/product_grid_item.dart';
@@ -36,19 +37,116 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   // ── Helper: Product → CartItem ─────────────────────────────────────────────
-  CartItem _toCartItem(Product p) => CartItem(
-    productId: p.id!,
-    productName: p.name,
-    unit: p.displayUnit,
-    sellingPrice: p.sellingPrice,
-    wholesalePrice:
-    p.wholesalePrice > 0 ? p.wholesalePrice : p.sellingPrice,
-    purchasePrice: p.purchasePrice,
-    gstRate: p.gstRate,
-    gstInclusive: p.gstInclusive,
-    rateType: p.rateType,
-    quantity: 1,
-  );
+  CartItem _toCartItem(Product p, {SaleType saleType = SaleType.retail}) {
+    final unit = saleType == SaleType.wholesale && p.wholesaleToRetailQty > 1.0
+        ? p.wholesaleUnit
+        : p.displayUnit;
+    return CartItem(
+      productId: p.id!,
+      productName: p.name,
+      unit: unit,
+      sellingPrice: p.sellingPrice,
+      wholesalePrice: p.wholesalePrice > 0 ? p.wholesalePrice : p.sellingPrice,
+      purchasePrice: p.purchasePrice,
+      gstRate: p.gstRate,
+      gstInclusive: p.gstInclusive,
+      rateType: p.rateType,
+      quantity: 1,
+      saleType: saleType,
+      retailPrice: p.retailPrice,
+      wholesaleToRetailQty: p.wholesaleToRetailQty,
+    );
+  }
+
+  /// Show sale type selection dialog for products with wholesaleToRetailQty > 1
+  Future<void> _addProductToCart(BuildContext context, Product product) async {
+    if (product.wholesaleToRetailQty > 1.0) {
+      await _showSaleTypeSheet(context, product);
+    } else {
+      context.read<BillingBloc>().add(AddToCart(_toCartItem(product)));
+      _showAddedFeedback(product.name);
+    }
+  }
+
+  Future<void> _showSaleTypeSheet(BuildContext context, Product product) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
+      builder: (_) => Container(
+        padding: EdgeInsets.all(20.w),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40.w, height: 4.h, decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2.r))),
+          SizedBox(height: 16.h),
+          Text('Select Sale Type', style: AppTheme.heading2),
+          SizedBox(height: 6.h),
+          Text(product.name, style: AppTheme.caption),
+          SizedBox(height: 20.h),
+          Row(children: [
+            Expanded(child: _saleTypeBtn(
+              context: context,
+              emoji: '🛒',
+              label: 'Retail',
+              sub: 'per ${product.retailUnit}  ₹${product.retailPrice > 0 ? product.retailPrice.toStringAsFixed(2) : product.sellingPrice.toStringAsFixed(2)}',
+              color: AppTheme.primary,
+              onTap: () {
+                Navigator.pop(context);
+                context.read<BillingBloc>().add(AddToCart(_toCartItem(product, saleType: SaleType.retail)));
+                _showAddedFeedback(product.name);
+              },
+            )),
+            SizedBox(width: 12.w),
+            Expanded(child: _saleTypeBtn(
+              context: context,
+              emoji: '📦',
+              label: 'Wholesale',
+              sub: 'per ${product.wholesaleUnit}  ₹${product.wholesalePrice.toStringAsFixed(2)}',
+              color: AppTheme.accent,
+              onTap: () {
+                Navigator.pop(context);
+                context.read<BillingBloc>().add(AddToCart(_toCartItem(product, saleType: SaleType.wholesale)));
+                _showAddedFeedback(product.name);
+              },
+            )),
+          ]),
+          SizedBox(height: 20.h),
+        ]),
+      ),
+    );
+  }
+
+  Widget _saleTypeBtn({
+    required BuildContext context,
+    required String emoji,
+    required String label,
+    required String sub,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(16.w),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14.r),
+          border: Border.all(color: color.withOpacity(0.4)),
+        ),
+        child: Column(children: [
+          Text(emoji, style: TextStyle(fontSize: 28.sp)),
+          SizedBox(height: 6.h),
+          Text(label, style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w700, color: color, fontFamily: 'Poppins')),
+          SizedBox(height: 4.h),
+          Text(sub, style: AppTheme.caption, textAlign: TextAlign.center),
+        ]),
+      ),
+    );
+  }
 
   // ✅ FIX: Central handler called after bill is saved successfully.
   //         1. Triggers Bluetooth print
@@ -433,10 +531,7 @@ class _BillingScreenState extends State<BillingScreen> {
                               .getProductUoms(product.id!);
                           if (!mounted) return;
                           if (uoms.isEmpty) {
-                            context
-                                .read<BillingBloc>()
-                                .add(AddToCart(_toCartItem(product)));
-                            _showAddedFeedback(product.name);
+                            await _addProductToCart(context, product);
                           } else {
                             showModalBottomSheet(
                               context: context,

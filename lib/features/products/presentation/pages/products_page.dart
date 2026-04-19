@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../core/utils/stock_display_helper.dart';
 import '../../domain/entities/product.dart';
 import '../bloc/product_bloc.dart';
 import 'add_edit_product_page.dart';
@@ -291,7 +292,14 @@ class _ProductTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4.r),
                   ),
                   child: Text(
-                    '${product.stockQuantity} ${product.unit}',
+                    product.wholesaleToRetailQty > 1.0
+                        ? StockDisplayHelper.formatMixedStock(
+                            stockRetailQty: product.stockQuantity,
+                            wholesaleToRetailQty: product.wholesaleToRetailQty,
+                            wholesaleUnit: product.wholesaleUnit,
+                            retailUnit: product.retailUnit,
+                          )
+                        : '${product.stockQuantity} ${product.unit}',
                     style: TextStyle(
                       fontSize: 10.sp,
                       fontWeight: FontWeight.w600,

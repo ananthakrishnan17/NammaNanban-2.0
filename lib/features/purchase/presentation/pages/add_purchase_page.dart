@@ -331,9 +331,30 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
               Expanded(child: Text(_selected!.name, style: AppTheme.heading2)),
               TextButton(onPressed: () => setState(() => _selected = null), child: const Text('Change')),
             ]),
+            if (_selected!.wholesaleToRetailQty > 1.0) ...[
+              SizedBox(height: 6.h),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8.r),
+                ),
+                child: Text(
+                  '1 ${_selected!.wholesaleUnit} = ${_selected!.wholesaleToRetailQty.toStringAsFixed(1)} ${_selected!.retailUnit}',
+                  style: AppTheme.caption.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
             SizedBox(height: 12.h),
             Row(children: [
-              Expanded(child: TextField(controller: _qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity'))),
+              Expanded(child: TextField(
+                controller: _qtyCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  suffixText: _selected!.wholesaleToRetailQty > 1.0 ? _selected!.wholesaleUnit : _selected!.unit,
+                ),
+              )),
               SizedBox(width: 10.w),
               Expanded(child: TextField(controller: _costCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit Cost (₹)'))),
             ]),
@@ -349,9 +370,12 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
               onPressed: () {
                 final qty = double.tryParse(_qtyCtrl.text) ?? 1;
                 final cost = double.tryParse(_costCtrl.text) ?? _selected!.purchasePrice;
+                final unit = _selected!.wholesaleToRetailQty > 1.0
+                    ? _selected!.wholesaleUnit
+                    : _selected!.unit;
                 widget.onItemAdded(PurchaseCartItem(
                     productId: _selected!.id!, productName: _selected!.name,
-                    unit: _selected!.unit, quantity: qty, unitCost: cost, gstRate: _gstRate));
+                    unit: unit, quantity: qty, unitCost: cost, gstRate: _gstRate));
               },
               child: const Text('Add to Purchase'),
             ),

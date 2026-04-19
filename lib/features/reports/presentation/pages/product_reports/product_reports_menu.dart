@@ -7,6 +7,7 @@ import 'itemwise_report_page.dart';
 import 'moving_products_report_page.dart';
 import 'product_stock_history_page.dart';
 import 'sales_by_item_report_page.dart';
+import 'wholesale_retail_report_page.dart';
 
 class ProductReportsMenu extends StatelessWidget {
   const ProductReportsMenu({super.key});
@@ -24,6 +25,8 @@ class ProductReportsMenu extends StatelessWidget {
           const CategoryStockReportPage()),
       ('📈', 'Product Stock History', 'Stock movement history',
           const ProductStockHistoryPage()),
+      ('📦', 'Wholesale/Retail Stock', 'Bag & kg stock breakdown',
+          const WholesaleRetailReportPage()),
     ];
 
     return Scaffold(

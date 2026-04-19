@@ -448,4 +448,31 @@ class ReportRepository {
       'profit_margin': netSales > 0 ? (netProfit / netSales) * 100 : 0.0,
     };
   }
+
+  // ── Wholesale / Retail Stock Report ─────────────────────────────────────────
+  /// Returns stock report with wholesale+retail breakdown for products
+  /// that have wholesaleToRetailQty > 1
+  Future<List<Map<String, dynamic>>> getWholesaleRetailStockReport() async {
+    final db = await _db.database;
+    return db.rawQuery('''
+      SELECT 
+        p.id, p.name, p.stock_quantity,
+        p.wholesale_unit, p.retail_unit, p.wholesale_to_retail_qty,
+        p.wholesale_price, p.retail_price,
+        COALESCE(SUM(CASE WHEN IFNULL(bi.sale_type, 'retail') = 'wholesale' THEN bi.quantity ELSE 0 END), 0) as total_wholesale_sold,
+        COALESCE(SUM(CASE WHEN IFNULL(bi.sale_type, 'retail') = 'retail' THEN bi.quantity ELSE 0 END), 0) as total_retail_sold,
+        COALESCE(pur.total_purchased_bags, 0) as total_purchased_bags
+      FROM products p
+      LEFT JOIN bill_items bi ON bi.product_id = p.id
+      LEFT JOIN bills b ON b.id = bi.bill_id AND (b.status IS NULL OR b.status != 'cancelled')
+      LEFT JOIN (
+        SELECT pi.product_id, SUM(pi.quantity) as total_purchased_bags
+        FROM purchase_items pi
+        GROUP BY pi.product_id
+      ) pur ON pur.product_id = p.id
+      WHERE p.wholesale_to_retail_qty > 1.0 AND p.is_active = 1
+      GROUP BY p.id, p.name
+      ORDER BY p.name ASC
+    ''');
+  }
 }

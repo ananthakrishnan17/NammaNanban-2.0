@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 8,
+    return await openDatabase(path, version: 9,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -57,6 +57,9 @@ class DatabaseHelper {
       low_stock_threshold REAL DEFAULT 5.0, gst_rate REAL DEFAULT 0.0,
       gst_inclusive INTEGER DEFAULT 1, rate_type TEXT DEFAULT 'fixed',
       barcode TEXT, hsn_code TEXT, is_active INTEGER DEFAULT 1,
+      wholesale_unit TEXT DEFAULT 'bag', retail_unit TEXT DEFAULT 'kg',
+      wholesale_to_retail_qty REAL DEFAULT 1.0, retail_price REAL DEFAULT 0.0,
+      stock_wholesale_qty REAL DEFAULT 0.0, stock_retail_qty REAL DEFAULT 0.0,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       FOREIGN KEY (category_id) REFERENCES categories (id),
       FOREIGN KEY (brand_id) REFERENCES brands (id),
@@ -117,6 +120,7 @@ class DatabaseHelper {
       purchase_price REAL NOT NULL DEFAULT 0.0, discount_amount REAL DEFAULT 0.0,
       gst_rate REAL DEFAULT 0.0, gst_amount REAL DEFAULT 0.0, total_price REAL NOT NULL,
       sale_uom_id INTEGER DEFAULT NULL, conversion_qty REAL DEFAULT 1.0,
+      sale_type TEXT DEFAULT 'retail',
       FOREIGN KEY (bill_id) REFERENCES bills (id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products (id))''');
 
@@ -261,6 +265,15 @@ class DatabaseHelper {
     }
     if (oldVersion < 8) {
       try { await db.execute('ALTER TABLE expenses ADD COLUMN is_raw_material INTEGER DEFAULT 0'); } catch (_) {}
+    }
+    if (oldVersion < 9) {
+      try { await db.execute("ALTER TABLE products ADD COLUMN wholesale_unit TEXT DEFAULT 'bag'"); } catch (_) {}
+      try { await db.execute("ALTER TABLE products ADD COLUMN retail_unit TEXT DEFAULT 'kg'"); } catch (_) {}
+      try { await db.execute('ALTER TABLE products ADD COLUMN wholesale_to_retail_qty REAL DEFAULT 1.0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE products ADD COLUMN retail_price REAL DEFAULT 0.0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE products ADD COLUMN stock_wholesale_qty REAL DEFAULT 0.0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE products ADD COLUMN stock_retail_qty REAL DEFAULT 0.0'); } catch (_) {}
+      try { await db.execute("ALTER TABLE bill_items ADD COLUMN sale_type TEXT DEFAULT 'retail'"); } catch (_) {}
     }
     await _seed(db, now);
   }

@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import '../../../products/domain/entities/product.dart';
+import 'sale_type.dart';
 
 enum BillType { retail, wholesale }
 extension BillTypeExt on BillType {
@@ -23,6 +24,10 @@ class CartItem extends Equatable {
   final int? saleUomId;           // null = base unit sale
   final String? saleUomShortName;
   final double conversionQty;     // base units per sale unit, default 1.0
+  // Wholesale/Retail sale type (v9)
+  final SaleType saleType;
+  final double retailPrice;       // retail price per retail unit
+  final double wholesaleToRetailQty; // conversion factor
 
   const CartItem({
     required this.productId, required this.productName, required this.unit,
@@ -30,10 +35,18 @@ class CartItem extends Equatable {
     required this.purchasePrice, this.gstRate = 0, this.gstInclusive = true,
     this.rateType = 'fixed', required this.quantity, this.overridePrice,
     this.saleUomId, this.saleUomShortName, this.conversionQty = 1.0,
+    this.saleType = SaleType.retail, this.retailPrice = 0.0,
+    this.wholesaleToRetailQty = 1.0,
   });
 
   double effectivePrice(BillType billType) {
     if (overridePrice != null) return overridePrice!;
+    // Use per-item saleType if set, otherwise fall back to cart-level billType
+    if (saleType == SaleType.wholesale) {
+      return wholesalePrice > 0 ? wholesalePrice : sellingPrice;
+    }
+    // retail: use retailPrice if configured, otherwise sellingPrice
+    if (retailPrice > 0) return retailPrice;
     return billType == BillType.wholesale ? wholesalePrice : sellingPrice;
   }
 
@@ -47,15 +60,17 @@ class CartItem extends Equatable {
   }
   bool get isOpenRate => rateType == 'open';
 
-  CartItem copyWith({double? quantity, double? overridePrice}) => CartItem(
+  CartItem copyWith({double? quantity, double? overridePrice, SaleType? saleType}) => CartItem(
     productId: productId, productName: productName, unit: unit,
     sellingPrice: sellingPrice, wholesalePrice: wholesalePrice, purchasePrice: purchasePrice,
     gstRate: gstRate, gstInclusive: gstInclusive, rateType: rateType,
     quantity: quantity ?? this.quantity, overridePrice: overridePrice ?? this.overridePrice,
     saleUomId: saleUomId, saleUomShortName: saleUomShortName, conversionQty: conversionQty,
+    saleType: saleType ?? this.saleType, retailPrice: retailPrice,
+    wholesaleToRetailQty: wholesaleToRetailQty,
   );
 
-  @override List<Object?> get props => [productId, saleUomId, quantity, overridePrice];
+  @override List<Object?> get props => [productId, saleUomId, quantity, overridePrice, saleType];
 }
 
 class BillItem extends Equatable {

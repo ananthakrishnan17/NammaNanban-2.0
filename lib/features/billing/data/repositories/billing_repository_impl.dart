@@ -1,6 +1,7 @@
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../domain/entities/bill.dart';
+import '../../domain/entities/sale_type.dart';
 
 abstract class BillingRepository {
   Future<Bill> saveBill({
@@ -81,6 +82,7 @@ class BillingRepositoryImpl implements BillingRepository {
         final effectivePrice = cartItem.effectivePrice(bt);
         final gstAmt = cartItem.gstAmountFor(bt);
         final itemTotal = cartItem.totalFor(bt);
+        final itemSaleType = cartItem.saleType.value;
         final itemId = await txn.insert('bill_items', {
           'bill_id': billId, 'product_id': cartItem.productId,
           'product_name': cartItem.productName, 'quantity': cartItem.quantity,
@@ -89,9 +91,15 @@ class BillingRepositoryImpl implements BillingRepository {
           'gst_rate': cartItem.gstRate, 'gst_amount': gstAmt, 'total_price': itemTotal,
           'sale_uom_id': cartItem.saleUomId,
           'conversion_qty': cartItem.conversionQty,
+          'sale_type': itemSaleType,
         });
-        // Deduct stock — use base-unit equivalent (qty × conversionQty)
-        final baseQtyToDeduct = cartItem.quantity * cartItem.conversionQty;
+        // Deduct stock — wholesale items deduct wholesaleToRetailQty per unit
+        final double baseQtyToDeduct;
+        if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
+          baseQtyToDeduct = cartItem.quantity * cartItem.wholesaleToRetailQty;
+        } else {
+          baseQtyToDeduct = cartItem.quantity * cartItem.conversionQty;
+        }
         await txn.rawUpdate(
             'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
             [baseQtyToDeduct, now.toIso8601String(), cartItem.productId]);
