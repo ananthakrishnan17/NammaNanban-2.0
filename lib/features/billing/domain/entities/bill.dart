@@ -41,12 +41,18 @@ class CartItem extends Equatable {
 
   double effectivePrice(BillType billType) {
     if (overridePrice != null) return overridePrice!;
-    // Use per-item saleType if set, otherwise fall back to cart-level billType
-    if (saleType == SaleType.wholesale) {
-      return wholesalePrice > 0 ? wholesalePrice : sellingPrice;
+    // For products configured with wholesale/retail split (wholesaleToRetailQty > 1),
+    // use the per-item saleType to determine price independently of cart billType.
+    if (wholesaleToRetailQty > 1.0) {
+      if (saleType == SaleType.wholesale) {
+        return wholesalePrice > 0 ? wholesalePrice : sellingPrice;
+      }
+      // SaleType.retail: use retailPrice if configured, otherwise sellingPrice
+      return retailPrice > 0 ? retailPrice : sellingPrice;
     }
-    // retail: use retailPrice if configured, otherwise sellingPrice
-    if (retailPrice > 0) return retailPrice;
+    // For regular products (not using the wholesale/retail split), fall back
+    // to the traditional cart-level billType logic for backward compatibility.
+    if (overridePrice != null) return overridePrice!;
     return billType == BillType.wholesale ? wholesalePrice : sellingPrice;
   }
 

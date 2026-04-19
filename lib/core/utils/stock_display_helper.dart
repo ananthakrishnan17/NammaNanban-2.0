@@ -1,4 +1,8 @@
 class StockDisplayHelper {
+  /// Minimum remaining retail quantity below which we don't display
+  /// (e.g., 0.01 kg is effectively zero for display purposes).
+  static const double _minRetailDisplayQty = 0.01;
+
   /// Given stock in retail units (e.g., 80 kg) and conversion (22 kg/bag),
   /// returns a display string like "3 bags 14 kg"
   static String formatMixedStock({
@@ -13,7 +17,7 @@ class StockDisplayHelper {
     final wholeBags = (stockRetailQty / wholesaleToRetailQty).floor();
     final remainingRetail = stockRetailQty - (wholeBags * wholesaleToRetailQty);
     if (wholeBags == 0) return '${remainingRetail.toStringAsFixed(1)} $retailUnit';
-    if (remainingRetail < 0.01) return '$wholeBags ${wholesaleUnit}s';
+    if (remainingRetail < _minRetailDisplayQty) return '$wholeBags ${wholesaleUnit}s';
     return '$wholeBags ${wholesaleUnit}s ${remainingRetail.toStringAsFixed(1)} $retailUnit';
   }
 }

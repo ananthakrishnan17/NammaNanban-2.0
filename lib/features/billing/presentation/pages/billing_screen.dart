@@ -92,7 +92,7 @@ class _BillingScreenState extends State<BillingScreen> {
               context: context,
               emoji: '🛒',
               label: 'Retail',
-              sub: 'per ${product.retailUnit}  ₹${product.retailPrice > 0 ? product.retailPrice.toStringAsFixed(2) : product.sellingPrice.toStringAsFixed(2)}',
+              sub: 'per ${product.retailUnit} ₹${product.retailPrice > 0 ? product.retailPrice.toStringAsFixed(2) : product.sellingPrice.toStringAsFixed(2)}',
               color: AppTheme.primary,
               onTap: () {
                 Navigator.pop(context);
@@ -105,7 +105,7 @@ class _BillingScreenState extends State<BillingScreen> {
               context: context,
               emoji: '📦',
               label: 'Wholesale',
-              sub: 'per ${product.wholesaleUnit}  ₹${product.wholesalePrice.toStringAsFixed(2)}',
+              sub: 'per ${product.wholesaleUnit} ₹${product.wholesalePrice.toStringAsFixed(2)}',
               color: AppTheme.accent,
               onTap: () {
                 Navigator.pop(context);
