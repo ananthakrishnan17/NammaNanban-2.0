@@ -4,6 +4,8 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../../../core/supabase/supabase_auth_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../license/presentation/bloc/license_bloc.dart';
+import '../../../license/presentation/pages/license_activation_page.dart';
 import '../../../subscription/services/subscription_service.dart';
 import '../../../subscription/presentation/pages/subscription_lock_screen.dart';
 import '../../../shell/presentation/pages/main_shell.dart';
@@ -214,10 +216,42 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
           ),
         ]),
       ),
+      SizedBox(height: 16.h),
+      // Mobile-number based activation option
+      OutlinedButton.icon(
+        onPressed: _openMobileActivation,
+        icon: Icon(Icons.phone_android, size: 18.sp, color: AppTheme.primary),
+        label: Text(
+          'Activate with Mobile Number',
+          style: TextStyle(color: AppTheme.primary, fontFamily: 'Poppins', fontSize: 13.sp),
+        ),
+        style: OutlinedButton.styleFrom(
+          minimumSize: Size(double.infinity, 48.h),
+          side: BorderSide(color: AppTheme.primary.withOpacity(0.6)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
+        ),
+      ),
       SizedBox(height: 24.h),
       Text('Contact us for your license key', style: TextStyle(fontSize: 12.sp, color: Colors.white38, fontFamily: 'Poppins')),
     ]),
   );
+
+  void _openMobileActivation() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: context.read<LicenseBloc>(),
+          child: LicenseActivationPage(
+            onActivated: () {
+              Navigator.pop(context);
+              _loadUsersForLicense();
+            },
+          ),
+        ),
+      ),
+    );
+  }
 
   // ── Step 1: User Select ───────────────────────────────────────────────────
 

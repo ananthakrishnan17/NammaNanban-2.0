@@ -11,6 +11,8 @@ import 'core/theme/app_theme.dart';
 import 'features/billing/presentation/bloc/billing_bloc.dart';
 import 'features/billing/presentation/pages/held_bills_page.dart';
 import 'features/expenses/presentation/bloc/expense_bloc.dart';
+import 'features/license/presentation/bloc/license_bloc.dart';
+import 'features/license/presentation/bloc/license_event.dart';
 import 'features/masters/presentation/bloc/masters_bloc.dart';
 import 'features/products/presentation/bloc/product_bloc.dart';
 import 'features/purchase/domain/entities/purchase.dart';
@@ -60,6 +62,7 @@ class ShopPOSApp extends StatelessWidget {
             BlocProvider(create: (_) => di.sl<PurchaseBloc>()..add(LoadPurchases())),
             BlocProvider(create: (_) => di.sl<HeldBillBloc>()..add(LoadHeldBills())),
             BlocProvider(create: (_) => di.sl<UserBloc>()),
+            BlocProvider(create: (_) => di.sl<LicenseBloc>()..add(const CheckLicense())),
           ],
           child: ListenableBuilder(
             listenable: AppLocalizations.instance,

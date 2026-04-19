@@ -15,7 +15,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 9,
+    return await openDatabase(path, version: 10,
         onCreate: _createDB, onUpgrade: _upgradeDB,
         onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'));
   }
@@ -168,6 +168,28 @@ class DatabaseHelper {
       reason TEXT, created_at TEXT NOT NULL,
       FOREIGN KEY (product_id) REFERENCES products (id))''');
 
+    // ── license_cache: Local copy of mobile-number based license ────────────
+    await db.execute('''CREATE TABLE license_cache (
+      id TEXT PRIMARY KEY,
+      mobile_number TEXT NOT NULL,
+      license_type TEXT NOT NULL DEFAULT 'offline',
+      device_id TEXT,
+      activated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL)''');
+
+    // ── sync_queue: Pending cloud sync items for Online license ──────────────
+    await db.execute('''CREATE TABLE sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_name TEXT NOT NULL,
+      record_id TEXT NOT NULL,
+      operation TEXT NOT NULL DEFAULT 'create',
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      retry_count INTEGER DEFAULT 0)''');
+
     await _seed(db, now);
   }
 
@@ -274,6 +296,30 @@ class DatabaseHelper {
       try { await db.execute('ALTER TABLE products ADD COLUMN stock_wholesale_qty REAL DEFAULT 0.0'); } catch (_) {}
       try { await db.execute('ALTER TABLE products ADD COLUMN stock_retail_qty REAL DEFAULT 0.0'); } catch (_) {}
       try { await db.execute("ALTER TABLE bill_items ADD COLUMN sale_type TEXT DEFAULT 'retail'"); } catch (_) {}
+    }
+    if (oldVersion < 10) {
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS license_cache (
+          id TEXT PRIMARY KEY,
+          mobile_number TEXT NOT NULL,
+          license_type TEXT NOT NULL DEFAULT 'offline',
+          device_id TEXT,
+          activated_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          is_active INTEGER DEFAULT 1,
+          created_at TEXT NOT NULL)''');
+      } catch (_) {}
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS sync_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          table_name TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          operation TEXT NOT NULL DEFAULT 'create',
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          retry_count INTEGER DEFAULT 0)''');
+      } catch (_) {}
     }
     await _seed(db, now);
   }
