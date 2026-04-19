@@ -475,4 +475,174 @@ class ReportRepository {
       ORDER BY p.name ASC
     ''');
   }
+
+  // ── Purchase Report ──────────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getPurchaseReport({
+    DateTime? from,
+    DateTime? to,
+    int? supplierId,
+    int? productId,
+    int? categoryId,
+  }) async {
+    final db = await _db.database;
+    final f = from ?? DateTime(2020);
+    final t = to ?? DateTime.now();
+
+    String where = "p.purchase_date BETWEEN ? AND ?";
+    final args = <dynamic>[
+      f.toIso8601String().substring(0, 10),
+      t.toIso8601String().substring(0, 10),
+    ];
+
+    if (supplierId != null) {
+      where += " AND p.supplier_id = ?";
+      args.add(supplierId);
+    }
+    if (productId != null) {
+      where += " AND pi.product_id = ?";
+      args.add(productId);
+    }
+    if (categoryId != null) {
+      where += " AND pr.category_id = ?";
+      args.add(categoryId);
+    }
+
+    return db.rawQuery('''
+      SELECT 
+        pi.id as item_id,
+        pi.product_id,
+        pi.product_name,
+        pi.quantity,
+        pi.unit,
+        pi.unit_cost,
+        pi.total_cost,
+        p.purchase_number,
+        p.purchase_date,
+        COALESCE(p.supplier_name, 'N/A') as supplier_name,
+        p.payment_mode,
+        COALESCE(c.name, 'Uncategorized') as category_name
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi.purchase_id
+      LEFT JOIN products pr ON pr.id = pi.product_id
+      LEFT JOIN categories c ON c.id = pr.category_id
+      WHERE $where
+      ORDER BY p.purchase_date DESC, p.id DESC
+    ''', args);
+  }
+
+  // ── Product Stock & Sales Report ─────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getProductStockSalesReport({
+    DateTime? from,
+    DateTime? to,
+    int? productId,
+    int? categoryId,
+  }) async {
+    final db = await _db.database;
+    final f = from ?? DateTime(2020);
+    final t = to ?? DateTime.now();
+    final fStr = f.toIso8601String().substring(0, 10);
+    final tStr = t.toIso8601String().substring(0, 10);
+
+    String outerWhere = "p.is_active = 1";
+    final args = <dynamic>[fStr, tStr, fStr, tStr, fStr, tStr];
+
+    if (productId != null) {
+      outerWhere += " AND p.id = ?";
+      args.add(productId);
+    }
+    if (categoryId != null) {
+      outerWhere += " AND p.category_id = ?";
+      args.add(categoryId);
+    }
+
+    return db.rawQuery('''
+      SELECT
+        p.id,
+        p.name,
+        COALESCE(p.unit, 'pcs') as unit,
+        COALESCE(p.wholesale_unit, 'bag') as wholesale_unit,
+        COALESCE(p.retail_unit, COALESCE(p.unit,'kg')) as retail_unit,
+        COALESCE(p.wholesale_to_retail_qty, 1.0) as wholesale_to_retail_qty,
+        p.selling_price,
+        COALESCE(p.retail_price, p.selling_price) as retail_price,
+        p.wholesale_price,
+        p.stock_quantity as current_stock,
+
+        COALESCE(pur.total_purchased_qty, 0) as total_purchased_qty,
+        COALESCE(pur.total_purchase_value, 0) as total_purchase_value,
+
+        COALESCE(wsales.total_wholesale_qty, 0) as total_wholesale_sold_qty,
+        COALESCE(wsales.total_wholesale_value, 0) as total_wholesale_sold_value,
+
+        COALESCE(rsales.total_retail_qty, 0) as total_retail_sold_qty,
+        COALESCE(rsales.total_retail_value, 0) as total_retail_sold_value,
+
+        COALESCE(
+          (COALESCE(wsales.total_wholesale_qty,0) * COALESCE(p.wholesale_to_retail_qty,1.0))
+          + COALESCE(rsales.total_retail_qty, 0),
+          0
+        ) as total_sold_base_qty,
+
+        COALESCE(c.name, 'Uncategorized') as category_name
+
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+
+      LEFT JOIN (
+        SELECT pi.product_id,
+          SUM(pi.quantity) as total_purchased_qty,
+          SUM(pi.total_cost) as total_purchase_value
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        WHERE pu.purchase_date BETWEEN ? AND ?
+        GROUP BY pi.product_id
+      ) pur ON pur.product_id = p.id
+
+      LEFT JOIN (
+        SELECT bi.product_id,
+          SUM(bi.quantity) as total_wholesale_qty,
+          SUM(bi.total_price) as total_wholesale_value
+        FROM bill_items bi
+        JOIN bills b ON b.id = bi.bill_id
+        WHERE DATE(b.created_at) BETWEEN ? AND ?
+          AND COALESCE(bi.sale_type, 'retail') = 'wholesale'
+          AND (b.status IS NULL OR b.status != 'cancelled')
+        GROUP BY bi.product_id
+      ) wsales ON wsales.product_id = p.id
+
+      LEFT JOIN (
+        SELECT bi.product_id,
+          SUM(bi.quantity) as total_retail_qty,
+          SUM(bi.total_price) as total_retail_value
+        FROM bill_items bi
+        JOIN bills b ON b.id = bi.bill_id
+        WHERE DATE(b.created_at) BETWEEN ? AND ?
+          AND COALESCE(bi.sale_type, 'retail') != 'wholesale'
+          AND (b.status IS NULL OR b.status != 'cancelled')
+        GROUP BY bi.product_id
+      ) rsales ON rsales.product_id = p.id
+
+      WHERE $outerWhere
+      ORDER BY p.name ASC
+    ''', args);
+  }
+
+  // ── Filter Dropdown Helpers ───────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getAllSuppliers() async {
+    final db = await _db.database;
+    return db.query('suppliers', where: 'is_active = 1', orderBy: 'name ASC');
+  }
+
+  Future<List<Map<String, dynamic>>> getAllCategories() async {
+    final db = await _db.database;
+    return db.query('categories', orderBy: 'name ASC');
+  }
+
+  Future<List<Map<String, dynamic>>> getAllProductsForFilter() async {
+    final db = await _db.database;
+    return db.query('products',
+        where: 'is_active = 1',
+        columns: ['id', 'name'],
+        orderBy: 'name ASC');
+  }
 }

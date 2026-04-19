@@ -6,6 +6,8 @@ import 'bill_reports/bill_reports_menu.dart';
 import 'financial_reports/financial_reports_menu.dart';
 import 'ledger_reports/ledger_reports_menu.dart';
 import 'product_reports/product_reports_menu.dart';
+import 'purchase_reports/purchase_report_page.dart';
+import 'stock_reports/product_stock_sales_report_page.dart';
 
 class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key});
@@ -67,6 +69,23 @@ class ReportsPage extends StatelessWidget {
                   color: AppTheme.warning,
                   onTap: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const LedgerReportsMenu())),
+                ),
+                _HubCard(
+                  emoji: '📥',
+                  title: 'Purchase Report',
+                  subtitle: 'Purchase entries',
+                  color: AppTheme.secondary,
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const PurchaseReportPage())),
+                ),
+                _HubCard(
+                  emoji: '📊',
+                  title: 'Stock & Sales',
+                  subtitle: 'Product reconciliation',
+                  color: AppTheme.danger,
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(
+                          builder: (_) => const ProductStockSalesReportPage())),
                 ),
               ],
             ),
