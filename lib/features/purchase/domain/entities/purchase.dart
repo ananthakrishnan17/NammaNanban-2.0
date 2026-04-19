@@ -129,9 +129,18 @@ class PurchaseRepository {
           'unit': item.unit, 'unit_cost': item.unitCost, 'gst_rate': item.gstRate,
           'gst_amount': item.gstAmount, 'total_cost': item.totalCost,
         });
-        // Update stock
+        // Update stock — convert wholesale units to retail units if configured
+        final productRows = await txn.query('products',
+            columns: ['wholesale_to_retail_qty'],
+            where: 'id = ?', whereArgs: [item.productId]);
+        final wholesaleToRetailQty = productRows.isNotEmpty
+            ? (productRows.first['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0
+            : 1.0;
+        final stockIncrement = wholesaleToRetailQty > 1.0
+            ? item.quantity * wholesaleToRetailQty
+            : item.quantity;
         await txn.rawUpdate('UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
-            [item.quantity, now.toIso8601String(), item.productId]);
+            [stockIncrement, now.toIso8601String(), item.productId]);
         // Update purchase price
         await txn.rawUpdate('UPDATE products SET purchase_price = ?, updated_at = ? WHERE id = ?',
             [item.unitCost, now.toIso8601String(), item.productId]);

@@ -21,6 +21,7 @@ class AddEditProductPage extends StatefulWidget {
 class _AddEditProductPageState extends State<AddEditProductPage> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameCtrl, _buyCtrl, _sellCtrl, _wsCtrl, _stockCtrl, _lowStockCtrl, _barcodeCtrl, _hsnCtrl;
+  late TextEditingController _wsUnitCtrl, _retailUnitCtrl, _wsToRetailQtyCtrl, _retailPriceCtrl;
   Category? _selectedCategory;
   Brand? _selectedBrand;
   UomUnit? _selectedUom;
@@ -42,6 +43,10 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _lowStockCtrl = TextEditingController(text: p?.lowStockThreshold.toString() ?? '5');
     _barcodeCtrl = TextEditingController(text: p?.barcode ?? '');
     _hsnCtrl = TextEditingController(text: p?.hsnCode ?? '');
+    _wsUnitCtrl = TextEditingController(text: p?.wholesaleUnit ?? 'bag');
+    _retailUnitCtrl = TextEditingController(text: p?.retailUnit ?? 'kg');
+    _wsToRetailQtyCtrl = TextEditingController(text: p != null ? p.wholesaleToRetailQty.toString() : '1.0');
+    _retailPriceCtrl = TextEditingController(text: p != null && p.retailPrice > 0 ? p.retailPrice.toStringAsFixed(2) : '');
     _gstRate = p?.gstRate ?? 0.0;
     _gstInclusive = p?.gstInclusive ?? true;
     _rateType = p?.rateType ?? 'fixed';
@@ -55,7 +60,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   }
 
   @override void dispose() {
-    for (final c in [_nameCtrl,_buyCtrl,_sellCtrl,_wsCtrl,_stockCtrl,_lowStockCtrl,_barcodeCtrl,_hsnCtrl]) c.dispose();
+    for (final c in [_nameCtrl,_buyCtrl,_sellCtrl,_wsCtrl,_stockCtrl,_lowStockCtrl,_barcodeCtrl,_hsnCtrl,_wsUnitCtrl,_retailUnitCtrl,_wsToRetailQtyCtrl,_retailPriceCtrl]) c.dispose();
     super.dispose();
   }
 
@@ -77,6 +82,10 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       barcode: _barcodeCtrl.text.isEmpty ? null : _barcodeCtrl.text,
       hsnCode: _hsnCtrl.text.isEmpty ? null : _hsnCtrl.text,
       isActive: _isActive, createdAt: widget.product?.createdAt ?? now, updatedAt: now,
+      wholesaleUnit: _wsUnitCtrl.text.trim().isEmpty ? 'bag' : _wsUnitCtrl.text.trim(),
+      retailUnit: _retailUnitCtrl.text.trim().isEmpty ? 'kg' : _retailUnitCtrl.text.trim(),
+      wholesaleToRetailQty: double.tryParse(_wsToRetailQtyCtrl.text) ?? 1.0,
+      retailPrice: double.tryParse(_retailPriceCtrl.text) ?? 0.0,
     );
     if (isEditing) {
       context.read<ProductBloc>().add(UpdateProduct(p));
@@ -245,6 +254,48 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 SizedBox(height: 8.h),
                 _gstPreview(),
               ],
+              SizedBox(height: 20.h),
+
+              _sec('⚖️ Wholesale / Retail Setup'),
+              Container(
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(12.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Configure if this product is sold in bulk (bags) and retail (kg)', style: AppTheme.caption),
+                  SizedBox(height: 12.h),
+                  Row(children: [
+                    Expanded(child: TextFormField(controller: _wsUnitCtrl,
+                        decoration: const InputDecoration(labelText: 'Wholesale Unit', hintText: 'e.g. bag'))),
+                    SizedBox(width: 10.w),
+                    Expanded(child: TextFormField(controller: _retailUnitCtrl,
+                        decoration: const InputDecoration(labelText: 'Retail Unit', hintText: 'e.g. kg'))),
+                  ]),
+                  SizedBox(height: 10.h),
+                  TextFormField(
+                    controller: _wsToRetailQtyCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'Conversion: 1 ${_wsUnitCtrl.text.isEmpty ? 'wholesale unit' : _wsUnitCtrl.text} = ? ${_retailUnitCtrl.text.isEmpty ? 'retail units' : _retailUnitCtrl.text}',
+                      hintText: 'e.g. 22.0',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  SizedBox(height: 10.h),
+                  TextFormField(
+                    controller: _retailPriceCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'Retail Price (per ${_retailUnitCtrl.text.isEmpty ? 'retail unit' : _retailUnitCtrl.text})',
+                      prefixText: '₹ ',
+                      hintText: 'e.g. 80.0',
+                    ),
+                  ),
+                ]),
+              ),
               SizedBox(height: 20.h),
 
               _sec('⚙️ Optional'),
