@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../features/license/domain/entities/license.dart';
 import '../../features/license/domain/repositories/license_repository.dart';
 import '../supabase/supabase_config.dart';
@@ -58,7 +60,9 @@ class SyncWorker {
       }
 
       await SyncQueueRepository.instance.updateStatus(id, SyncStatus.synced);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[SyncWorker] Failed to sync item ${item.id} '
+          '(${item.tableName}/${item.recordId}): $e');
       await SyncQueueRepository.instance.updateStatus(
         id,
         SyncStatus.failed,

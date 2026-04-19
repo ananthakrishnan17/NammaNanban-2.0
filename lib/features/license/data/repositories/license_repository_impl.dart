@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/database/database_helper.dart';
@@ -73,8 +74,9 @@ class LicenseRepositoryImpl implements LicenseRepository {
 
       await cacheLicense(model);
       return model;
-    } catch (_) {
+    } catch (e) {
       // Network error — fall back to cache
+      debugPrint('[LicenseRepository] Network verify failed, using cache: $e');
       return getCachedLicense();
     }
   }
@@ -88,7 +90,8 @@ class LicenseRepositoryImpl implements LicenseRepository {
       if (rows.isEmpty) return null;
       final model = LicenseModel.fromLocalMap(rows.first);
       return model.isExpired ? null : model;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[LicenseRepository] Local DB cache read failed: $e');
       // Fallback to SharedPreferences cache
       return _getCachedFromPrefs();
     }
@@ -121,7 +124,9 @@ class LicenseRepositoryImpl implements LicenseRepository {
       final model = LicenseModel.fromEntity(license);
       await db.delete('license_cache');
       await db.insert('license_cache', model.toLocalMap());
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[LicenseRepository] Failed to write license to local DB: $e');
+    }
 
     // Persist in SharedPreferences (primary)
     final prefs = await SharedPreferences.getInstance();
@@ -141,7 +146,9 @@ class LicenseRepositoryImpl implements LicenseRepository {
     try {
       final db = await DatabaseHelper.instance.database;
       await db.delete('license_cache');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[LicenseRepository] Failed to clear local license cache: $e');
+    }
     final prefs = await SharedPreferences.getInstance();
     for (final k in [
       _kLicenseId,

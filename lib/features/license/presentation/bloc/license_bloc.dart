@@ -76,7 +76,10 @@ class LicenseBloc extends Bloc<LicenseEvent, LicenseState> {
       );
       emit(LicenseActivated(license));
     } catch (e) {
-      emit(LicenseError(e.toString().replaceFirst('Exception: ', '')));
+      final message = e is Exception
+          ? e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '')
+          : e.toString();
+      emit(LicenseError(message));
     }
   }
 
