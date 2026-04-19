@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../../core/theme/app_theme.dart';
 import 'billwise_report_page.dart';
 import 'cancelled_bill_report_page.dart';
+import 'gst_report_page.dart';
 import 'hourly_sales_report_page.dart';
 import 'modified_bill_report_page.dart';
 import 'sales_by_bill_report_page.dart';
@@ -24,6 +25,8 @@ class BillReportsMenu extends StatelessWidget {
           const BillwiseReportPage()),
       ('⏰', 'Hourly Sales Report', 'Sales distribution by hour',
           const HourlySalesReportPage()),
+      ('🏛️', 'GST Report', 'GST summary with JSON export',
+          const GstReportPage()),
     ];
 
     return Scaffold(

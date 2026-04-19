@@ -5,14 +5,17 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../printer/services/printer_service.dart';
+import '../../data/repositories/billing_repository_impl.dart';
 import '../../domain/entities/bill.dart';
 
 class BillViewScreen extends StatefulWidget {
   final Bill bill;
-  const BillViewScreen({super.key, required this.bill});
+  final bool isAdmin;
+  const BillViewScreen({super.key, required this.bill, this.isAdmin = false});
 
   @override
   State<BillViewScreen> createState() => _BillViewScreenState();
@@ -23,10 +26,12 @@ class _BillViewScreenState extends State<BillViewScreen> {
   String _shopPhone = '';
   String? _logoPath;
   bool _logoExists = false;
+  late final BillingRepositoryImpl _billingRepo;
 
   @override
   void initState() {
     super.initState();
+    _billingRepo = BillingRepositoryImpl(DatabaseHelper.instance);
     _loadPrefs();
   }
 
@@ -56,6 +61,41 @@ class _BillViewScreenState extends State<BillViewScreen> {
     ));
   }
 
+  Future<void> _onDelete() async {
+    final bill = widget.bill;
+    if (bill.id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Bill?'),
+        content: Text('Are you sure you want to delete Bill #${bill.billNumber}? This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _billingRepo.deleteBill(bill.id!);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Bill #${bill.billNumber} deleted'),
+        backgroundColor: AppTheme.danger,
+        behavior: SnackBarBehavior.floating,
+      ));
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete: $e'), backgroundColor: AppTheme.danger));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bill = widget.bill;
@@ -70,6 +110,12 @@ class _BillViewScreenState extends State<BillViewScreen> {
       appBar: AppBar(
         title: Text('Bill #${bill.billNumber}'),
         actions: [
+          if (widget.isAdmin)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              tooltip: 'Delete Bill',
+              onPressed: _onDelete,
+            ),
           IconButton(
             icon: const Text('🖨️', style: TextStyle(fontSize: 22)),
             tooltip: 'Print',

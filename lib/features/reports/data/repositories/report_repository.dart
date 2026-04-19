@@ -116,6 +116,47 @@ class ReportRepository {
     }).toList();
   }
 
+  // ── Total Bill Count (all-time, non-cancelled) ──────────────────────────────
+  Future<int> getTotalBillCount() async {
+    final db = await _db.database;
+    final result = await db.rawQuery(
+        "SELECT COUNT(*) as cnt FROM bills WHERE status IS NULL OR status != 'cancelled'");
+    return (result.first['cnt'] as int? ?? 0);
+  }
+
+  // ── GST Report ──────────────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getGstReport(
+      {required DateTime from, required DateTime to}) async {
+    final db = await _db.database;
+    return db.rawQuery('''
+      SELECT
+        b.id as bill_id,
+        b.bill_number,
+        b.bill_type,
+        b.customer_name,
+        b.customer_gstin,
+        b.created_at,
+        b.total_amount,
+        b.discount_amount,
+        b.gst_total,
+        b.cgst_total,
+        b.sgst_total,
+        b.payment_mode,
+        bi.product_name,
+        bi.quantity,
+        bi.unit,
+        bi.unit_price,
+        bi.gst_rate,
+        bi.gst_amount,
+        bi.total_price
+      FROM bills b
+      JOIN bill_items bi ON bi.bill_id = b.id
+      WHERE b.created_at BETWEEN ? AND ?
+        AND (b.status IS NULL OR b.status != 'cancelled')
+      ORDER BY b.created_at DESC, b.id, bi.id
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+  }
+
   // ── Bill-wise Report ────────────────────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getBillwiseReport(
       {required DateTime from, required DateTime to}) async {
