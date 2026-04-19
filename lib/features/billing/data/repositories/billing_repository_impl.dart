@@ -13,6 +13,8 @@ abstract class BillingRepository {
     String? customerAddress, String? customerGstin,
   });
   Future<List<Bill>> getBillsByDate(DateTime date);
+  Future<Bill> getBillById(int id);
+  Future<List<Bill>> getAllBills({DateTime? fromDate, DateTime? toDate});
   Future<Map<String, double>> getDailySummary(DateTime date);
   Future<Map<String, double>> getMonthlySummary(int year, int month);
   Future<void> deleteBill(int id);
@@ -175,6 +177,87 @@ class BillingRepositoryImpl implements BillingRepository {
       totalProfit: (r['total_profit'] as num).toDouble(),
       customerName: r['customer_name'] as String?,
       paymentMode: r['payment_mode'] as String? ?? 'cash',
+      createdAt: DateTime.parse(r['created_at'] as String),
+    )).toList();
+  }
+
+  @override
+  Future<Bill> getBillById(int id) async {
+    final db = await _dbHelper.database;
+    final rows = await db.query('bills', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) throw Exception('Bill #$id not found');
+    final map = rows.first;
+    final itemRows = await db.query('bill_items', where: 'bill_id = ?', whereArgs: [id]);
+    final items = itemRows.map((r) => BillItem(
+      id: r['id'] as int?,
+      billId: id,
+      productId: r['product_id'] as int? ?? 0,
+      productName: r['product_name'] as String? ?? '',
+      quantity: (r['quantity'] as num).toDouble(),
+      unit: r['unit'] as String? ?? '',
+      unitPrice: (r['unit_price'] as num).toDouble(),
+      purchasePrice: (r['purchase_price'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (r['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      gstRate: (r['gst_rate'] as num?)?.toDouble() ?? 0.0,
+      gstAmount: (r['gst_amount'] as num?)?.toDouble() ?? 0.0,
+      totalPrice: (r['total_price'] as num).toDouble(),
+    )).toList();
+    return Bill(
+      id: map['id'] as int?,
+      billNumber: map['bill_number'] as String,
+      billType: map['bill_type'] as String? ?? 'retail',
+      items: items,
+      totalAmount: (map['total_amount'] as num).toDouble(),
+      totalProfit: (map['total_profit'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (map['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      gstTotal: (map['gst_total'] as num?)?.toDouble() ?? 0.0,
+      cgstTotal: (map['cgst_total'] as num?)?.toDouble() ?? 0.0,
+      sgstTotal: (map['sgst_total'] as num?)?.toDouble() ?? 0.0,
+      paymentMode: map['payment_mode'] as String? ?? 'cash',
+      splitPaymentSummary: map['split_payment_summary'] as String?,
+      customerId: map['customer_id'] as int?,
+      customerName: map['customer_name'] as String?,
+      customerAddress: map['customer_address'] as String?,
+      customerGstin: map['customer_gstin'] as String?,
+      createdAt: DateTime.parse(map['created_at'] as String),
+    );
+  }
+
+  @override
+  Future<List<Bill>> getAllBills({DateTime? fromDate, DateTime? toDate}) async {
+    final db = await _dbHelper.database;
+    String? where;
+    List<dynamic>? whereArgs;
+    if (fromDate != null && toDate != null) {
+      where = 'created_at BETWEEN ? AND ?';
+      whereArgs = [fromDate.toIso8601String(), toDate.toIso8601String()];
+    } else if (fromDate != null) {
+      where = 'created_at >= ?';
+      whereArgs = [fromDate.toIso8601String()];
+    } else if (toDate != null) {
+      where = 'created_at <= ?';
+      whereArgs = [toDate.toIso8601String()];
+    }
+    final rows = await db.query(
+      'bills',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'created_at DESC',
+    );
+    return rows.map((r) => Bill(
+      id: r['id'] as int,
+      billNumber: r['bill_number'] as String,
+      billType: r['bill_type'] as String? ?? 'retail',
+      items: [],
+      totalAmount: (r['total_amount'] as num).toDouble(),
+      totalProfit: (r['total_profit'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (r['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      gstTotal: (r['gst_total'] as num?)?.toDouble() ?? 0.0,
+      paymentMode: r['payment_mode'] as String? ?? 'cash',
+      splitPaymentSummary: r['split_payment_summary'] as String?,
+      customerName: r['customer_name'] as String?,
+      customerAddress: r['customer_address'] as String?,
+      customerGstin: r['customer_gstin'] as String?,
       createdAt: DateTime.parse(r['created_at'] as String),
     )).toList();
   }

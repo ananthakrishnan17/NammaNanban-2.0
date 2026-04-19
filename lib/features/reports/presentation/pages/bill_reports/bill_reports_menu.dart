@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../../../../core/theme/app_theme.dart';
+import '../../../../billing/presentation/pages/all_bills_page.dart';
 import 'billwise_report_page.dart';
 import 'cancelled_bill_report_page.dart';
 import 'gst_report_page.dart';
@@ -15,6 +16,8 @@ class BillReportsMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
+      ('🗂️', 'All Bills', 'Browse & view all bills',
+          const AllBillsPage()),
       ('📝', 'Modified Bill Report', 'Bills with modifications',
           const ModifiedBillReportPage()),
       ('❌', 'Cancelled Bill Report', 'All cancelled bills',
