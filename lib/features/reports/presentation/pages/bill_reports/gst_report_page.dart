@@ -113,7 +113,7 @@ class _GstReportPageState extends State<GstReportPage> {
       final invoices = bills.map((b) {
         final id = b['bill_id'] as int;
         final items = billItems[id] ?? [];
-        final createdAt = DateTime.parse(b['created_at'] as String);
+        final createdAt = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
 
         double invTaxable = 0, invCgst = 0, invSgst = 0, invGst = 0, invTotal = 0;
         invTotal = (b['total_amount'] as num).toDouble();
@@ -270,7 +270,7 @@ class _GstReportPageState extends State<GstReportPage> {
                           separatorBuilder: (_, __) => SizedBox(height: 8.h),
                           itemBuilder: (_, i) {
                             final b = bills[i];
-                            final date = DateTime.parse(b['created_at'] as String);
+                            final date = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
                             final gstTotal = (b['gst_total'] as num? ?? 0).toDouble();
                             final total = (b['total_amount'] as num).toDouble();
                             return GestureDetector(

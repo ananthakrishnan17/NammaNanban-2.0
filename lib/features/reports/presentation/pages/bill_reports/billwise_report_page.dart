@@ -105,8 +105,15 @@ class _BillwiseReportPageState extends State<BillwiseReportPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Bill-wise Report'),
-        subtitle: Text('All-time: $_totalBillCount bills', style: const TextStyle(fontSize: 12)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Bill-wise Report'),
+            if (_totalBillCount > 0)
+              Text('All-time: $_totalBillCount bills',
+                  style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w400)),
+          ],
+        ),
         actions: [
           if (bills.isNotEmpty)
             IconButton(icon: const Icon(Icons.picture_as_pdf), onPressed: _export)
