@@ -184,16 +184,26 @@ class _BillingScreenState extends State<BillingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            _buildBillTypeToggle(),
-            Expanded(
-                child: _showCart ? _buildCartView() : _buildProductView()),
-          ],
+    return BlocListener<BillingBloc, CartState>(
+      listenWhen: (prev, curr) =>
+          prev.isSaving == true &&
+          curr.isSaving == false &&
+          curr.lastSavedBill != null,
+      listener: (context, state) {
+        final bill = state.lastSavedBill!;
+        _onBillSaved(context, bill);
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.surface,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildTopBar(),
+              _buildBillTypeToggle(),
+              Expanded(
+                  child: _showCart ? _buildCartView() : _buildProductView()),
+            ],
+          ),
         ),
       ),
     );
@@ -617,17 +627,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
   // ── Cart View ─────────────────────────────────────────────────────────────
   Widget _buildCartView() {
-    return BlocConsumer<BillingBloc, CartState>(
-      // ✅ FIX: Listen for isSaving=false + lastSavedBill != null
-      //         This is the only place that triggers print + cart reset.
-      listenWhen: (prev, curr) =>
-      prev.isSaving == true &&
-          curr.isSaving == false &&
-          curr.lastSavedBill != null,
-      listener: (context, state) {
-        final bill = state.lastSavedBill!;
-        _onBillSaved(context, bill);
-      },
+    return BlocBuilder<BillingBloc, CartState>(
       builder: (context, state) {
         final cart = state as CartState;
 

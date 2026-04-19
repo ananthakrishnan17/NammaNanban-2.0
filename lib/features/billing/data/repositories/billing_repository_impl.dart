@@ -13,6 +13,7 @@ abstract class BillingRepository {
   Future<List<Bill>> getBillsByDate(DateTime date);
   Future<Map<String, double>> getDailySummary(DateTime date);
   Future<Map<String, double>> getMonthlySummary(int year, int month);
+  Future<void> deleteBill(int id);
 }
 
 class BillingRepositoryImpl implements BillingRepository {
@@ -157,5 +158,15 @@ class BillingRepositoryImpl implements BillingRepository {
         ['$prefix%']);
     final row = result.first;
     return {'sales': (row['sales'] as num).toDouble(), 'profit': (row['profit'] as num).toDouble(), 'billCount': (row['bill_count'] as num).toDouble()};
+  }
+
+  @override
+  Future<void> deleteBill(int id) async {
+    final db = await _dbHelper.database;
+    await db.transaction((txn) async {
+      await txn.delete('bill_items', where: 'bill_id = ?', whereArgs: [id]);
+      await txn.delete('bill_payment_splits', where: 'bill_id = ?', whereArgs: [id]);
+      await txn.delete('bills', where: 'id = ?', whereArgs: [id]);
+    });
   }
 }
