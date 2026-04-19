@@ -23,6 +23,8 @@ import 'features/shell/presentation/pages/main_shell.dart';
 import 'features/users/domain/entities/app_user.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/supabase/supabase_config.dart';
+import 'core/supabase/supabase_sync_service.dart';
+import 'core/sync/connectivity_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +38,12 @@ void main() async {
   await DatabaseHelper.instance.database;
   await di.init();
   await AppLocalizations.instance.load();
+
+  // Trigger auto-sync for online licenses if network is available
+  if (ConnectivityService.instance.isOnline) {
+    SupabaseSyncService.instance.autoSync();
+  }
+
   final prefs = await SharedPreferences.getInstance();
   final bool isSetupDone = prefs.getBool('setup_done') ?? false;
   Widget startPage = !isSetupDone ? const SetupPage() : const LoginScreen();
