@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/l10n/app_localizations.dart';
 import '../../../../core/supabase/supabase_auth_service.dart';
@@ -24,10 +27,12 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  String _shopName='', _shopAddress='', _shopPhone='';
+  String _shopName='', _shopAddress='', _shopPhone='', _logoPath='';
   bool _isBackingUp=false, _isRestoring=false;
   int _daysLeft=0;
   SubscriptionStatus _subStatus = SubscriptionStatus.active;
+
+  bool _logoFileExists = false;
 
   @override void initState() { super.initState(); _load(); }
 
@@ -39,6 +44,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _shopName = prefs.getString('shop_name') ?? '';
       _shopAddress = prefs.getString('shop_address') ?? '';
       _shopPhone = prefs.getString('shop_phone') ?? '';
+      _logoPath = prefs.getString('logo_path') ?? '';
+      _logoFileExists = _logoPath.isNotEmpty && File(_logoPath).existsSync();
       _subStatus = status; _daysLeft = days;
     });
   }
@@ -62,6 +69,17 @@ class _SettingsPageState extends State<SettingsPage> {
           // Shop Info
           _head('🏪  ${lang.t("shop_info")}'),
           _card([
+            if (_logoFileExists) ...[
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 10.h),
+                child: Row(children: [
+                  CircleAvatar(backgroundImage: FileImage(File(_logoPath)), radius: 28.r),
+                  SizedBox(width: 10.w),
+                  Text('Shop Logo', style: AppTheme.caption),
+                ]),
+              ),
+              _div(),
+            ],
             _info('Shop Name', _shopName.isEmpty ? 'Not set' : _shopName),
             _div(), _info('Address', _shopAddress.isEmpty ? 'Not set' : _shopAddress),
             _div(), _info('Phone', _shopPhone.isEmpty ? 'Not set' : _shopPhone),
@@ -216,23 +234,53 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
           child: SetPinScreen(onPinSet: () { Navigator.pop(ctx); ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('PIN updated! ✅'), backgroundColor: AppTheme.accent)); })));
 
-  void _editShop(BuildContext ctx) {
+  void _editShop(BuildContext ctx) async {
     final nc=TextEditingController(text: _shopName), ac=TextEditingController(text: _shopAddress), pc=TextEditingController(text: _shopPhone);
+    final prefs = await SharedPreferences.getInstance();
+    String? logoPath = prefs.getString('logo_path');
+    if (!mounted) return;
+
+    Future<void> pickLogo(StateSetter setSt) async {
+      final picked = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 512, maxHeight: 512);
+      if (picked != null) setSt(() => logoPath = picked.path);
+    }
+
+    bool logoExists(String? path) => path != null && path.isNotEmpty && File(path).existsSync();
+
     showModalBottomSheet(context: ctx, isScrollControlled: true, backgroundColor: Colors.transparent,
-        builder: (_) => Container(padding: EdgeInsets.only(left: 20.w, right: 20.w, top: 20.h, bottom: MediaQuery.of(ctx).viewInsets.bottom + 20.h),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('Edit Shop Info', style: AppTheme.heading2), SizedBox(height: 16.h),
-              TextField(controller: nc, decoration: const InputDecoration(labelText: 'Shop Name')), SizedBox(height: 10.h),
-              TextField(controller: ac, decoration: const InputDecoration(labelText: 'Address'), maxLines: 2), SizedBox(height: 10.h),
-              TextField(controller: pc, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone')),
-              SizedBox(height: 16.h),
-              ElevatedButton(onPressed: () async {
-                final p = await SharedPreferences.getInstance();
-                await p.setString('shop_name', nc.text.trim()); await p.setString('shop_address', ac.text.trim()); await p.setString('shop_phone', pc.text.trim());
-                await _load(); if (mounted) Navigator.pop(ctx);
-              }, child: const Text('Save')),
-            ])));
+        builder: (_) => StatefulBuilder(
+          builder: (sheetCtx, setSt) => Container(padding: EdgeInsets.only(left: 20.w, right: 20.w, top: 20.h, bottom: MediaQuery.of(ctx).viewInsets.bottom + 20.h),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
+              child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Edit Shop Info', style: AppTheme.heading2), SizedBox(height: 16.h),
+                // Logo picker
+                Center(
+                  child: Column(children: [
+                    GestureDetector(
+                      onTap: () => pickLogo(setSt),
+                      child: logoExists(logoPath)
+                          ? CircleAvatar(backgroundImage: FileImage(File(logoPath!)), radius: 40.r)
+                          : CircleAvatar(radius: 40.r, child: Icon(Icons.store, size: 32.sp)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => pickLogo(setSt),
+                      icon: const Icon(Icons.camera_alt),
+                      label: const Text('Change Logo'),
+                    ),
+                  ]),
+                ),
+                SizedBox(height: 8.h),
+                TextField(controller: nc, decoration: const InputDecoration(labelText: 'Shop Name')), SizedBox(height: 10.h),
+                TextField(controller: ac, decoration: const InputDecoration(labelText: 'Address'), maxLines: 2), SizedBox(height: 10.h),
+                TextField(controller: pc, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone')),
+                SizedBox(height: 16.h),
+                ElevatedButton(onPressed: () async {
+                  final p = await SharedPreferences.getInstance();
+                  await p.setString('shop_name', nc.text.trim()); await p.setString('shop_address', ac.text.trim()); await p.setString('shop_phone', pc.text.trim());
+                  await p.setString('logo_path', logoPath ?? '');
+                  await _load(); if (mounted) Navigator.pop(ctx);
+                }, child: const Text('Save')),
+              ])))));
   }
 
   Future<void> _backup(BuildContext ctx) async {
