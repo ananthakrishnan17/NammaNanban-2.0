@@ -173,6 +173,7 @@ class CartState extends Equatable {
     splitPayments,
     billType,
     selectedCustomer,
+    customerName,
     isSaving,
     lastSavedBill,
     errorMessage,
