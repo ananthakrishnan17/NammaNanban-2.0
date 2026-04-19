@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../../../core/database/database_helper.dart';
 import '../../../../../core/theme/app_theme.dart';
 import '../../../../../core/utils/currency_formatter.dart';
+import '../../../../billing/presentation/pages/bill_view_screen.dart';
 import '../../../data/repositories/report_repository.dart';
 import '../../../utils/pdf_export_helper.dart';
 import '../../widgets/date_range_filter.dart';
@@ -124,7 +125,20 @@ class _BillwiseReportPageState extends State<BillwiseReportPage> {
                           itemBuilder: (_, i) {
                             final b = _bills[i];
                             final date = DateTime.parse(b['created_at'] as String);
-                            return Container(
+                            return GestureDetector(
+                              onTap: () async {
+                                try {
+                                  final bill = await _repo.getBillById(b['id'] as int);
+                                  if (!mounted) return;
+                                  Navigator.push(context,
+                                    MaterialPageRoute(builder: (_) => BillViewScreen(bill: bill)));
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Failed to load bill: $e')));
+                                }
+                              },
+                              child: Container(
                               padding: EdgeInsets.all(14.w),
                               decoration: BoxDecoration(
                                 color: Colors.white,
@@ -152,6 +166,7 @@ class _BillwiseReportPageState extends State<BillwiseReportPage> {
                                 Text(CurrencyFormatter.format((b['total_amount'] as num).toDouble()),
                                     style: AppTheme.price.copyWith(fontSize: 14.sp)),
                               ]),
+                            ),
                             );
                           }),
         ),

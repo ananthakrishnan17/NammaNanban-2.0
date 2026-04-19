@@ -1,4 +1,5 @@
 import '../../../../core/database/database_helper.dart';
+import '../../../billing/domain/entities/bill.dart';
 
 class ReportRepository {
   final DatabaseHelper _db;
@@ -129,6 +130,48 @@ class ReportRepository {
       GROUP BY b.id
       ORDER BY b.created_at DESC
     ''', [from.toIso8601String(), to.toIso8601String()]);
+  }
+
+  // ── Get Bill By ID ──────────────────────────────────────────────────────────
+  Future<Bill> getBillById(int id) async {
+    final db = await _db.database;
+    final rows = await db.query('bills', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) throw Exception('Bill #$id not found');
+    final map = rows.first;
+    final itemRows = await db.query('bill_items', where: 'bill_id = ?', whereArgs: [id]);
+    final items = itemRows.map((r) => BillItem(
+      id: r['id'] as int?,
+      billId: id,
+      productId: r['product_id'] as int? ?? 0,
+      productName: r['product_name'] as String? ?? '',
+      quantity: (r['quantity'] as num).toDouble(),
+      unit: r['unit'] as String? ?? '',
+      unitPrice: (r['unit_price'] as num).toDouble(),
+      purchasePrice: (r['purchase_price'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (r['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      gstRate: (r['gst_rate'] as num?)?.toDouble() ?? 0.0,
+      gstAmount: (r['gst_amount'] as num?)?.toDouble() ?? 0.0,
+      totalPrice: (r['total_price'] as num).toDouble(),
+    )).toList();
+    return Bill(
+      id: map['id'] as int?,
+      billNumber: map['bill_number'] as String,
+      billType: map['bill_type'] as String? ?? 'retail',
+      items: items,
+      totalAmount: (map['total_amount'] as num).toDouble(),
+      totalProfit: (map['total_profit'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (map['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      gstTotal: (map['gst_total'] as num?)?.toDouble() ?? 0.0,
+      cgstTotal: (map['cgst_total'] as num?)?.toDouble() ?? 0.0,
+      sgstTotal: (map['sgst_total'] as num?)?.toDouble() ?? 0.0,
+      paymentMode: map['payment_mode'] as String? ?? 'cash',
+      splitPaymentSummary: map['split_payment_summary'] as String?,
+      customerId: map['customer_id'] as int?,
+      customerName: map['customer_name'] as String?,
+      customerAddress: map['customer_address'] as String?,
+      customerGstin: map['customer_gstin'] as String?,
+      createdAt: DateTime.parse(map['created_at'] as String),
+    );
   }
 
   // ── Hourly Sales ────────────────────────────────────────────────────────────
