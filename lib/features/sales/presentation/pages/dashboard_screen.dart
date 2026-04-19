@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../billing/presentation/pages/all_bills_page.dart';
 import '../../../expenses/presentation/bloc/expense_bloc.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../../sales/presentation/bloc/sales_bloc.dart';
@@ -42,6 +43,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _buildHeader(),
                 SizedBox(height: 16.h),
                 _buildTodaySummary(),
+                SizedBox(height: 12.h),
+                _buildViewAllBillsButton(),
                 SizedBox(height: 16.h),
                 _buildMonthlyChart(),
                 SizedBox(height: 16.h),
@@ -146,6 +149,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
         return const Center(child: CircularProgressIndicator());
       },
+    );
+  }
+
+  Widget _buildViewAllBillsButton() {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AllBillsPage()),
+      ),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14.r),
+          border: Border.all(color: AppTheme.primary.withOpacity(0.25)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36.w,
+              height: 36.h,
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10.r),
+              ),
+              child: Center(child: Text('🧾', style: TextStyle(fontSize: 18.sp))),
+            ),
+            SizedBox(width: 12.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'View All Bills',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.primary,
+                      fontFamily: 'Poppins',
+                    ),
+                  ),
+                  Text('Browse & manage billing history',
+                      style: AppTheme.caption.copyWith(fontSize: 11.sp)),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios_rounded,
+                size: 14.sp, color: AppTheme.primary),
+          ],
+        ),
+      ),
     );
   }
 
