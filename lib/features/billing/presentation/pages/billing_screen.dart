@@ -5,7 +5,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
-import '../../../printer/services/printer_service.dart';
 import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
@@ -16,6 +15,7 @@ import '../widgets/cart_item_tile.dart';
 import '../widgets/product_grid_item.dart';
 import '../widgets/payment_bottom_sheet.dart';
 import '../widgets/uom_picker_sheet.dart';
+import 'bill_view_screen.dart';
 import 'held_bills_page.dart';
 import 'split_bill_page.dart';
 
@@ -149,37 +149,37 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   // ✅ FIX: Central handler called after bill is saved successfully.
-  //         1. Triggers Bluetooth print
-  //         2. Resets cart via ResetAfterSave (NOT ClearCart — that wipes mid-save)
-  //         3. Navigates back to product grid
+  //         1. Hides cart so UI feels responsive
+  //         2. Resets cart via ResetAfterSave
+  //         3. Navigates to BillViewScreen (print happens there on demand)
   Future<void> _onBillSaved(BuildContext context, Bill bill) async {
     // Hide cart immediately so UI feels responsive
     setState(() => _showCart = false);
 
-    // Attempt print — runs in background, shows result via SnackBar
-    final printed = await PrinterService.instance.printBill(bill);
+    // ✅ Clean reset — preserves bill type preference
+    context.read<BillingBloc>().add(ResetAfterSave());
 
     if (!mounted) return;
 
+    // Show quick confirmation snack
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          printed
-              ? '✅ Bill saved & printed!'
-              : '✅ Bill saved! (Printer not connected)',
-        ),
-        backgroundColor: printed ? AppTheme.accent : AppTheme.warning,
+        content: Text('✅ Bill #${bill.billNumber} saved!'),
+        backgroundColor: AppTheme.accent,
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 2),
         margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10.r)),
       ),
     );
 
-    // ✅ Clean reset AFTER print attempt — preserves bill type preference
-    context.read<BillingBloc>().add(ResetAfterSave());
+    // Navigate to receipt view (print is triggered from there)
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => BillViewScreen(bill: bill)),
+    );
   }
 
   @override
