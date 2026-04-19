@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database/database_helper.dart';
 import '../supabase/supabase_config.dart';
@@ -69,18 +70,21 @@ class SupabaseSyncService {
       final prefs = await SharedPreferences.getInstance();
       final lastSyncedId = prefs.getInt(_kLastBillSync) ?? 0;
 
-      // Get bills not yet synced
+      // Get bills not yet synced — use json_group_array to safely aggregate items
       final bills = await db.rawQuery('''
-        SELECT b.*, GROUP_CONCAT(
-          json_object(
-            'product_name', bi.product_name,
-            'quantity', bi.quantity,
-            'unit', bi.unit,
-            'unit_price', bi.unit_price,
-            'total_price', bi.total_price,
-            'gst_rate', bi.gst_rate
-          )
-        ) as items_json
+        SELECT b.*,
+               json_group_array(
+                 CASE WHEN bi.product_id IS NOT NULL
+                 THEN json_object(
+                   'product_name', bi.product_name,
+                   'quantity', bi.quantity,
+                   'unit', bi.unit,
+                   'unit_price', bi.unit_price,
+                   'total_price', bi.total_price,
+                   'gst_rate', bi.gst_rate
+                 )
+                 ELSE NULL END
+               ) as items_json
         FROM bills b
         LEFT JOIN bill_items bi ON b.id = bi.bill_id
         WHERE b.id > ?
@@ -92,6 +96,22 @@ class SupabaseSyncService {
       if (bills.isEmpty) return;
 
       for (final bill in bills) {
+        // Parse items_json — json_group_array returns a JSON array string
+        final rawItemsJson = bill['items_json'] as String?;
+        final List<Map<String, dynamic>> parsedItems = [];
+        if (rawItemsJson != null && rawItemsJson.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(rawItemsJson);
+            if (decoded is List) {
+              // Filter out null entries (produced when a bill has no items via LEFT JOIN)
+              parsedItems.addAll(
+                decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)),
+              );
+            }
+          } catch (_) {
+            // Non-fatal: proceed with empty items list
+          }
+        }
         await syncBill(
           localBillId: bill['id'] as int,
           billNumber: bill['bill_number'] as String,
@@ -103,7 +123,7 @@ class SupabaseSyncService {
           paymentMode: bill['payment_mode'] as String? ?? 'cash',
           customerName: bill['customer_name'] as String?,
           billedBy: null, // will be set after user system integration
-          items: [], // already have items in bill_items table
+          items: parsedItems,
           createdAt: DateTime.parse(bill['created_at'] as String),
         );
       }

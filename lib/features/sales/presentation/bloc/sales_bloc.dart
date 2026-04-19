@@ -43,6 +43,25 @@ class SalesLoaded extends SalesState {
   @override
   List<Object?> get props => [todaySales, todayProfit, monthlySales, monthlyProfit];
 }
+
+class SalesByDateLoaded extends SalesState {
+  final DateTime date;
+  final List<Map<String, dynamic>> bills;
+  final double totalSales;
+  final double totalProfit;
+  final int billCount;
+
+  SalesByDateLoaded({
+    required this.date,
+    required this.bills,
+    required this.totalSales,
+    required this.totalProfit,
+    required this.billCount,
+  });
+
+  @override
+  List<Object?> get props => [date, bills, totalSales, totalProfit, billCount];
+}
 class SalesError extends SalesState {
   final String message;
   SalesError(this.message);
@@ -55,6 +74,7 @@ class SalesBloc extends Bloc<SalesEvent, SalesState> {
 
   SalesBloc(this._repository) : super(SalesInitial()) {
     on<LoadSalesData>(_onLoadSalesData);
+    on<LoadSalesByDate>(_onLoadSalesByDate);
   }
 
   Future<void> _onLoadSalesData(LoadSalesData event, Emitter<SalesState> emit) async {
@@ -78,6 +98,23 @@ class SalesBloc extends Bloc<SalesEvent, SalesState> {
         monthlyBillCount: (monthlySummary['billCount'] ?? 0.0).toInt(),
         weeklyData: weeklyData,
         profitMargin: profitMargin,
+      ));
+    } catch (e) {
+      emit(SalesError(e.toString()));
+    }
+  }
+
+  Future<void> _onLoadSalesByDate(LoadSalesByDate event, Emitter<SalesState> emit) async {
+    emit(SalesLoading());
+    try {
+      final summary = await _repository.getDailySummary(event.date);
+      final bills = await _repository.getDailyReport(event.date);
+      emit(SalesByDateLoaded(
+        date: event.date,
+        bills: bills,
+        totalSales: summary['sales'] ?? 0.0,
+        totalProfit: summary['profit'] ?? 0.0,
+        billCount: (summary['billCount'] ?? 0.0).toInt(),
       ));
     } catch (e) {
       emit(SalesError(e.toString()));

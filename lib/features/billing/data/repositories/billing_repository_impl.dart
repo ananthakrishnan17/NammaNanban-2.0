@@ -1,5 +1,7 @@
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../core/sync/sync_service.dart';
+import '../../../../core/sync/sync_status.dart';
 import '../../domain/entities/bill.dart';
 import '../../domain/entities/sale_type.dart';
 
@@ -22,7 +24,21 @@ class BillingRepositoryImpl implements BillingRepository {
 
   String _genBillNumber() {
     final now = DateTime.now();
-    return '${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}-${now.millisecond.toString().padLeft(4,'0')}';
+    return '${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}'
+        '-${now.hour.toString().padLeft(2,'0')}${now.minute.toString().padLeft(2,'0')}'
+        '${now.second.toString().padLeft(2,'0')}${now.millisecond.toString().padLeft(3,'0')}';
+  }
+
+  /// Builds the items payload list from [BillItem]s for cloud sync.
+  List<Map<String, dynamic>> _billItemsPayload(List<BillItem> items) {
+    return items.map((i) => {
+      'product_name': i.productName,
+      'quantity': i.quantity,
+      'unit': i.unit,
+      'unit_price': i.unitPrice,
+      'total_price': i.totalPrice,
+      'gst_rate': i.gstRate,
+    }).toList();
   }
 
   @override
@@ -54,7 +70,7 @@ class BillingRepositoryImpl implements BillingRepository {
     double totalProfit = items.fold(0.0, (s, i) => s + i.profitFor(bt));
     double gstTotal = items.fold(0.0, (s, i) => s + i.gstAmountFor(bt));
 
-    return await db.transaction((txn) async {
+    final bill = await db.transaction((txn) async {
       final billId = await txn.insert('bills', {
         'bill_number': _genBillNumber(), 'bill_type': billType,
         'customer_id': customerId, 'customer_name': customerName,
@@ -120,6 +136,31 @@ class BillingRepositoryImpl implements BillingRepository {
           customerName: customerName, customerAddress: customerAddress,
           customerGstin: customerGstin, createdAt: now);
     });
+
+    // Enqueue bill for cloud sync (no-op for offline licenses)
+    await SyncService.instance.enqueue(
+      tableName: 'bills_sync',
+      recordId: bill.id.toString(),
+      operation: SyncOperation.create,
+      payload: {
+        'local_bill_id': bill.id,
+        'bill_number': bill.billNumber,
+        'bill_type': bill.billType,
+        'customer_name': bill.customerName,
+        'customer_address': bill.customerAddress,
+        'customer_gstin': bill.customerGstin,
+        'total_amount': bill.totalAmount,
+        'total_profit': bill.totalProfit,
+        'discount_amount': bill.discountAmount,
+        'gst_total': bill.gstTotal,
+        'payment_mode': bill.paymentMode,
+        'split_payment_summary': bill.splitPaymentSummary,
+        'items_json': _billItemsPayload(bill.items),
+        'created_at': bill.createdAt.toIso8601String(),
+      },
+    );
+
+    return bill;
   }
 
   @override
@@ -163,7 +204,36 @@ class BillingRepositoryImpl implements BillingRepository {
   @override
   Future<void> deleteBill(int id) async {
     final db = await _dbHelper.database;
+    final now = DateTime.now();
     await db.transaction((txn) async {
+      // Query bill items joined with products to get the correct stock quantities
+      final billItemRows = await txn.rawQuery('''
+        SELECT bi.product_id, bi.quantity, bi.sale_type, bi.conversion_qty,
+               COALESCE(p.wholesale_to_retail_qty, 1.0) as wholesale_to_retail_qty
+        FROM bill_items bi
+        LEFT JOIN products p ON bi.product_id = p.id
+        WHERE bi.bill_id = ?
+      ''', [id]);
+      for (final row in billItemRows) {
+        final productId = row['product_id'] as int?;
+        if (productId == null) continue;
+        final quantity = (row['quantity'] as num).toDouble();
+        final saleType = row['sale_type'] as String? ?? 'retail';
+        final conversionQty = (row['conversion_qty'] as num?)?.toDouble() ?? 1.0;
+        final wholesaleToRetailQty =
+            (row['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0;
+        // Mirror the deduction logic used in saveBill
+        final double baseQtyToRestore;
+        if (saleType == 'wholesale' && wholesaleToRetailQty > 1.0) {
+          baseQtyToRestore = quantity * wholesaleToRetailQty;
+        } else {
+          baseQtyToRestore = quantity * conversionQty;
+        }
+        await txn.rawUpdate(
+          'UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
+          [baseQtyToRestore, now.toIso8601String(), productId],
+        );
+      }
       await txn.delete('bill_items', where: 'bill_id = ?', whereArgs: [id]);
       await txn.delete('bill_payment_splits', where: 'bill_id = ?', whereArgs: [id]);
       await txn.delete('bills', where: 'id = ?', whereArgs: [id]);

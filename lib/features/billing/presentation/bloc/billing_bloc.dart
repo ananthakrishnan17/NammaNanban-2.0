@@ -101,6 +101,8 @@ class RestoreHeldCartItems extends BillingEvent {
     this.customerName,
     this.discountAmount = 0,
   });
+  @override
+  List<Object?> get props => [items, billType, customerName, discountAmount];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,6 +152,7 @@ class CartState extends Equatable {
     String? errorMessage,
     bool clearLastSavedBill = false,   // ✅ explicit null-clear flag
     bool clearError = false,
+    bool clearCustomer = false,        // ✅ explicit null-clear for customer
   }) =>
       CartState(
         items: items ?? this.items,
@@ -157,8 +160,8 @@ class CartState extends Equatable {
         paymentMode: paymentMode ?? this.paymentMode,
         splitPayments: splitPayments ?? this.splitPayments,
         billType: billType ?? this.billType,
-        selectedCustomer: selectedCustomer ?? this.selectedCustomer,
-        customerName: customerName ?? this.customerName,
+        selectedCustomer: clearCustomer ? null : (selectedCustomer ?? this.selectedCustomer),
+        customerName: clearCustomer ? null : (customerName ?? this.customerName),
         isSaving: isSaving ?? this.isSaving,
         // ✅ allow explicit null-clear without losing value on other copies
         lastSavedBill: clearLastSavedBill ? null : (lastSavedBill ?? this.lastSavedBill),
@@ -195,8 +198,9 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
     on<SetPaymentMode>((e, emit) => emit(state.copyWith(paymentMode: e.mode)));
     on<SetSplitPayments>((e, emit) => emit(state.copyWith(splitPayments: e.splits)));
     on<SetBillType>((e, emit) => emit(state.copyWith(billType: e.billType)));
-    on<SetCustomer>((e, emit) => emit(state.copyWith(
-        selectedCustomer: e.customer, customerName: e.customer?.name)));
+    on<SetCustomer>((e, emit) => emit(e.customer == null
+        ? state.copyWith(clearCustomer: true)
+        : state.copyWith(selectedCustomer: e.customer, customerName: e.customer?.name)));
     on<SetCustomerName>((e, emit) => emit(state.copyWith(customerName: e.name)));
     on<SaveBill>(_onSave);
     on<ResetAfterSave>((e, emit) => emit(const CartState())); // ✅ clean reset

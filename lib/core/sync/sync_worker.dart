@@ -45,13 +45,16 @@ class SyncWorker {
 
       final payload = {...item.payload, 'license_id': licenseId};
 
+      // Determine the correct composite conflict key per table
+      final onConflict = _conflictKey(item.tableName);
+
       switch (item.operation) {
         case SyncOperation.create:
           await SupabaseClientHelper.table(item.tableName)
-              .upsert(payload, onConflict: 'id');
+              .upsert(payload, onConflict: onConflict);
         case SyncOperation.update:
           await SupabaseClientHelper.table(item.tableName)
-              .upsert(payload, onConflict: 'id');
+              .upsert(payload, onConflict: onConflict);
         case SyncOperation.delete:
           final recordId = item.recordId;
           await SupabaseClientHelper.table(item.tableName)
@@ -68,6 +71,22 @@ class SyncWorker {
         SyncStatus.failed,
         retryCount: (item.retryCount) + 1,
       );
+    }
+  }
+
+  /// Returns the composite conflict key for upsert based on [tableName].
+  String _conflictKey(String tableName) {
+    switch (tableName) {
+      case 'bills_sync':
+        return 'license_id, local_bill_id';
+      case 'products_sync':
+        return 'license_id, local_product_id';
+      case 'expenses_sync':
+        return 'license_id, local_expense_id';
+      case 'purchases_sync':
+        return 'license_id, local_purchase_id';
+      default:
+        return 'id';
     }
   }
 }
