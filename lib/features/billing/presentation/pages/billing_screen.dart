@@ -25,6 +25,8 @@ class BillingScreen extends StatefulWidget {
   State<BillingScreen> createState() => _BillingScreenState();
 }
 
+const Duration _kBottomSheetDismissalDelay = Duration(milliseconds: 150);
+
 class _BillingScreenState extends State<BillingScreen> {
   final TextEditingController _searchController = TextEditingController();
   int? _selectedCategoryId;
@@ -153,15 +155,19 @@ class _BillingScreenState extends State<BillingScreen> {
   //         2. Resets cart via ResetAfterSave
   //         3. Navigates to BillViewScreen (print happens there on demand)
   Future<void> _onBillSaved(BuildContext context, Bill bill) async {
-    // Hide cart immediately so UI feels responsive
-    setState(() => _showCart = false);
+    // Close the payment bottom sheet first (it's the topmost route)
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
 
-    // ✅ Clean reset — preserves bill type preference
+    // Small delay to let the sheet dismiss animation complete
+    await Future.delayed(_kBottomSheetDismissalDelay);
+
+    setState(() => _showCart = false);
     context.read<BillingBloc>().add(ResetAfterSave());
 
     if (!mounted) return;
 
-    // Show quick confirmation snack
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -175,7 +181,7 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
     );
 
-    // Navigate to receipt view (print is triggered from there)
+    // Now safe to push BillViewScreen (bottom sheet is gone)
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => BillViewScreen(bill: bill)),

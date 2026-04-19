@@ -74,16 +74,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocConsumer<BillingBloc, CartState>(
-      // ✅ FIX: Close the sheet the moment save finishes (isSaving flips false + bill set)
-      //         Without this the sheet stays open forever showing a spinner.
-      listenWhen: (prev, curr) =>
-      prev.isSaving == true &&
-          curr.isSaving == false,
-      listener: (context, state) {
-        // Close sheet regardless of success/failure — errors shown by BillingScreen
-        Navigator.of(context).pop();
-      },
+    return BlocBuilder<BillingBloc, CartState>(
       builder: (context, state) {
         final cart = state as CartState;
         final isSaving = cart.isSaving;
