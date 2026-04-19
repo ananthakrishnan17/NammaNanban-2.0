@@ -499,8 +499,13 @@ class _BillDetailSheetState extends State<_BillDetailSheet> {
   }
 
   Future<void> _loadBill() async {
+    final id = widget.summaryBill.id;
+    if (id == null) {
+      if (mounted) setState(() { _error = 'Invalid bill: missing ID'; _isLoading = false; });
+      return;
+    }
     try {
-      final bill = await widget.repo.getBillById(widget.summaryBill.id!);
+      final bill = await widget.repo.getBillById(id);
       if (mounted) setState(() { _fullBill = bill; _isLoading = false; });
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
