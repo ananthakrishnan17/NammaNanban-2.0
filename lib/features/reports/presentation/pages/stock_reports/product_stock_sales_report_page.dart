@@ -55,6 +55,9 @@ class _ProductStockSalesReportPageState
     } catch (_) {
       // Dropdown loading failure is non-fatal; filters will be empty
     }
+  }
+
+  Future<void> _load() async {
     setState(() {
       _isLoading = true;
       _error = null;
