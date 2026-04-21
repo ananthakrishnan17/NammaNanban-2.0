@@ -56,7 +56,7 @@ class ProductRepositoryImpl implements ProductRepository {
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN brands b ON p.brand_id = b.id
       LEFT JOIN uom_units u ON p.uom_id = u.id
-      WHERE p.is_active = 1 AND p.stock_quantity <= p.low_stock_threshold
+      WHERE p.is_active = 1 AND p.stock_quantity > 0 AND p.stock_quantity <= p.low_stock_threshold  -- FIX BUG#7
       ORDER BY p.stock_quantity ASC''');
     return rows.map((m) => ProductModel.fromMap(m)).toList();
   }

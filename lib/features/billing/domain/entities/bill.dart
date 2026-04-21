@@ -66,11 +66,20 @@ class CartItem extends Equatable {
   }
   bool get isOpenRate => rateType == 'open';
 
-  CartItem copyWith({double? quantity, double? overridePrice, SaleType? saleType}) => CartItem(
+  // FIX BUG#6: clearOverridePrice flag lets callers reset an open-rate override.
+  // Passing null for overridePrice previously meant 'keep existing'; now you
+  // can pass clearOverridePrice: true to explicitly set it back to null.
+  CartItem copyWith({
+    double? quantity,
+    double? overridePrice,
+    SaleType? saleType,
+    bool clearOverridePrice = false,
+  }) => CartItem(
     productId: productId, productName: productName, unit: unit,
     sellingPrice: sellingPrice, wholesalePrice: wholesalePrice, purchasePrice: purchasePrice,
     gstRate: gstRate, gstInclusive: gstInclusive, rateType: rateType,
-    quantity: quantity ?? this.quantity, overridePrice: overridePrice ?? this.overridePrice,
+    quantity: quantity ?? this.quantity,
+    overridePrice: clearOverridePrice ? null : (overridePrice ?? this.overridePrice),
     saleUomId: saleUomId, saleUomShortName: saleUomShortName, conversionQty: conversionQty,
     saleType: saleType ?? this.saleType, retailPrice: retailPrice,
     wholesaleToRetailQty: wholesaleToRetailQty,
@@ -113,6 +122,7 @@ class Bill extends Equatable {
   final double gstTotal;
   final double cgstTotal;
   final double sgstTotal;
+  final double igstTotal;  // FIX BUG#2: added for inter-state transactions
   final String paymentMode;
   final int? customerId;
   final String? customerName;
@@ -125,7 +135,8 @@ class Bill extends Equatable {
   const Bill({this.id, required this.billNumber, this.billType = 'retail',
     required this.items, required this.totalAmount, required this.totalProfit,
     this.discountAmount = 0.0, this.gstTotal = 0.0, this.cgstTotal = 0.0,
-    this.sgstTotal = 0.0, this.paymentMode = 'cash', this.customerId,
+    this.sgstTotal = 0.0, this.igstTotal = 0.0,  // FIX BUG#2
+    this.paymentMode = 'cash', this.customerId,
     this.customerName, this.customerAddress, this.customerGstin,
     this.notes, this.splitPaymentSummary, required this.createdAt});
 
@@ -159,6 +170,16 @@ class BillModel extends Bill {
     super.customerName,
     super.notes,
     required super.createdAt,
+    // FIX BUG#9: expose GST fields so fromMap can populate them
+    super.gstTotal,
+    super.cgstTotal,
+    super.sgstTotal,
+    super.igstTotal,  // FIX BUG#2
+    super.billType,
+    super.customerId,
+    super.customerAddress,
+    super.customerGstin,
+    super.splitPaymentSummary,
   });
 
   factory BillModel.fromMap(Map<String, dynamic> map, List<BillItem> items) {
@@ -173,6 +194,16 @@ class BillModel extends Bill {
       customerName: map['customer_name'] as String?,
       notes: map['notes'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
+      // FIX BUG#9: read GST columns that were silently dropped before
+      gstTotal: (map['gst_total'] as num?)?.toDouble() ?? 0.0,
+      cgstTotal: (map['cgst_total'] as num?)?.toDouble() ?? 0.0,
+      sgstTotal: (map['sgst_total'] as num?)?.toDouble() ?? 0.0,
+      igstTotal: (map['igst_total'] as num?)?.toDouble() ?? 0.0,  // FIX BUG#2
+      billType: map['bill_type'] as String? ?? 'retail',
+      customerId: map['customer_id'] as int?,
+      customerAddress: map['customer_address'] as String?,
+      customerGstin: map['customer_gstin'] as String?,
+      splitPaymentSummary: map['split_payment_summary'] as String?,
     );
   }
 

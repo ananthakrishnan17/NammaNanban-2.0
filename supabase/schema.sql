@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_license ON subscriptions (license_id);
 
--- ─────────────────────────────────────────────────────────────
+-- ────────────────────────[─────────────────────────────────────
 -- Row Level Security
 -- NOTE: The policies below are permissive for anon access to
 -- allow the mobile app to operate without user-level JWT auth.

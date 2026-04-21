@@ -1,4 +1,5 @@
-import '../../database/database_helper.dart';
+
+import '../database/database_helper.dart';
 import 'sync_queue.dart';
 import 'sync_status.dart';
 

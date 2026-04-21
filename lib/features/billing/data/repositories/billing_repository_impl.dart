@@ -49,6 +49,7 @@ class BillingRepositoryImpl implements BillingRepository {
     double discountAmount = 0.0, String paymentMode = 'cash',
     List<SplitPayment>? splitPayments,
     int? customerId, String? customerName, String? customerAddress, String? customerGstin,
+    bool isInterState = false,  // FIX BUG#2: pass true for inter-state (IGST) transactions
   }) async {
     final db = await _dbHelper.database;
     final now = DateTime.now();
@@ -68,18 +69,28 @@ class BillingRepositoryImpl implements BillingRepository {
       }).join(' + ');
     }
 
-    double totalAmount = items.fold(0.0, (s, i) => s + i.totalFor(bt)) - discountAmount;
+    // FIX BUG#4: clamp so totalAmount can never go negative
+    double totalAmount = (items.fold(0.0, (s, i) => s + i.totalFor(bt)) - discountAmount)
+        .clamp(0.0, double.infinity);
     double totalProfit = items.fold(0.0, (s, i) => s + i.profitFor(bt));
     double gstTotal = items.fold(0.0, (s, i) => s + i.gstAmountFor(bt));
 
+    // FIX BUG#2: split GST correctly based on transaction type
+    final double cgstAmount = isInterState ? 0.0 : gstTotal / 2;
+    final double sgstAmount = isInterState ? 0.0 : gstTotal / 2;
+    final double igstAmount = isInterState ? gstTotal : 0.0;
+
+    // FIX BUG#1: generate bill number ONCE and reuse for both DB insert and returned object
+    final String billNum = _genBillNumber();
+
     final bill = await db.transaction((txn) async {
       final billId = await txn.insert('bills', {
-        'bill_number': _genBillNumber(), 'bill_type': billType,
+        'bill_number': billNum, 'bill_type': billType,  // FIX BUG#1
         'customer_id': customerId, 'customer_name': customerName,
         'customer_address': customerAddress, 'customer_gstin': customerGstin,
         'total_amount': totalAmount, 'total_profit': totalProfit,
         'discount_amount': discountAmount, 'gst_total': gstTotal,
-        'cgst_total': gstTotal / 2, 'sgst_total': gstTotal / 2,
+        'cgst_total': cgstAmount, 'sgst_total': sgstAmount, 'igst_total': igstAmount,  // FIX BUG#2
         'payment_mode': effectivePaymentMode,
         'split_payment_summary': splitSummary,
         'created_at': now.toIso8601String(),
@@ -129,10 +140,11 @@ class BillingRepositoryImpl implements BillingRepository {
             gstRate: cartItem.gstRate, gstAmount: gstAmt, totalPrice: itemTotal));
       }
 
-      return Bill(id: billId, billNumber: 'BILL-$billId', billType: billType,
+      return Bill(id: billId, billNumber: billNum, billType: billType,  // FIX BUG#1
           items: billItems, totalAmount: totalAmount, totalProfit: totalProfit,
-          discountAmount: discountAmount, gstTotal: gstTotal, cgstTotal: gstTotal/2,
-          sgstTotal: gstTotal/2, paymentMode: effectivePaymentMode,
+          discountAmount: discountAmount, gstTotal: gstTotal, cgstTotal: cgstAmount,
+          sgstTotal: sgstAmount, igstTotal: igstAmount,  // FIX BUG#2
+          paymentMode: effectivePaymentMode,
           splitPaymentSummary: splitSummary,
           customerId: customerId,
           customerName: customerName, customerAddress: customerAddress,

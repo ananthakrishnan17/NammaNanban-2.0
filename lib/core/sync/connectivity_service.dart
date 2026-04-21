@@ -9,7 +9,7 @@ class ConnectivityService {
 
   final Connectivity _connectivity = Connectivity();
   bool _isOnline = false;
-  StreamSubscription<List<ConnectivityResult>>? _subscription;
+  StreamSubscription<ConnectivityResult>? _subscription;
 
   bool get isOnline => _isOnline;
 
@@ -17,14 +17,13 @@ class ConnectivityService {
 
   /// Start monitoring. Should be called once at app startup.
   Future<void> init() async {
-    final results = await _connectivity.checkConnectivity();
-    _isOnline = _isConnected(results);
+    final result = await _connectivity.checkConnectivity();
+    _isOnline = result != ConnectivityResult.none;
 
-    _subscription = _connectivity.onConnectivityChanged.listen((results) {
+    _subscription = _connectivity.onConnectivityChanged.listen((result) {
       final wasOnline = _isOnline;
-      _isOnline = _isConnected(results);
+      _isOnline = result != ConnectivityResult.none;
       if (!wasOnline && _isOnline) {
-        // Network just restored — notify listeners
         for (final cb in _onRestoreCallbacks) {
           cb();
         }
@@ -43,7 +42,4 @@ class ConnectivityService {
     _subscription = null;
     _onRestoreCallbacks.clear();
   }
-
-  bool _isConnected(List<ConnectivityResult> results) =>
-      results.any((r) => r != ConnectivityResult.none);
 }

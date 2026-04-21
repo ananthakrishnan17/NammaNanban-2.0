@@ -20,24 +20,26 @@ class SplitBillPage extends StatefulWidget {
 }
 
 class _SplitBillPageState extends State<SplitBillPage> {
-  // productIds of items assigned to Bill 2 (everything else stays in Bill 1)
-  final Set<int> _bill2Ids = {};
+  // FIX BUG#8: use composite key 'productId-saleUomId' so the same product in
+  // two different UOMs can be split independently between bills.
+  final Set<String> _bill2Ids = {};
 
   List<CartItem> get _bill1Items =>
-      widget.cart.items.where((i) => !_bill2Ids.contains(i.productId)).toList();
+      widget.cart.items.where((i) => !_bill2Ids.contains('${i.productId}-${i.saleUomId}')).toList();  // FIX BUG#8
 
   List<CartItem> get _bill2Items =>
-      widget.cart.items.where((i) => _bill2Ids.contains(i.productId)).toList();
+      widget.cart.items.where((i) => _bill2Ids.contains('${i.productId}-${i.saleUomId}')).toList();  // FIX BUG#8
 
   double _total(List<CartItem> items) =>
       items.fold(0.0, (s, i) => s + i.totalFor(widget.cart.billType));
 
-  void _toggleItem(int productId) {
+  // FIX BUG#8: signature changed to String compositeKey ('productId-saleUomId')
+  void _toggleItem(String compositeKey) {
     setState(() {
-      if (_bill2Ids.contains(productId)) {
-        _bill2Ids.remove(productId);
+      if (_bill2Ids.contains(compositeKey)) {
+        _bill2Ids.remove(compositeKey);
       } else {
-        _bill2Ids.add(productId);
+        _bill2Ids.add(compositeKey);
       }
     });
   }
@@ -72,17 +74,17 @@ class _SplitBillPageState extends State<SplitBillPage> {
       paymentMode: widget.cart.paymentMode,
     );
     context.read<HeldBillBloc>().add(
-          HoldCurrentBill(bill2CartState, holdName: '🔀 Split — Bill 2'),
-        );
+      HoldCurrentBill(bill2CartState, holdName: '🔀 Split — Bill 2'),
+    );
 
     // Load Bill 1 into main cart (discount reset; cashier re-applies if needed).
     // RestoreHeldCartItems.billType accepts a String, so we convert the enum here.
     context.read<BillingBloc>().add(RestoreHeldCartItems(
-          items: bill1,
-          billType: widget.cart.billType.value,
-          customerName: widget.cart.customerName,
-          discountAmount: 0,
-        ));
+      items: bill1,
+      billType: widget.cart.billType.value,
+      customerName: widget.cart.customerName,
+      discountAmount: 0,
+    ));
 
     // Capture messenger before popping to safely show snackbar on parent screen
     final messenger = ScaffoldMessenger.of(context);
@@ -132,7 +134,7 @@ class _SplitBillPageState extends State<SplitBillPage> {
             color: AppTheme.primary.withOpacity(0.06),
             child: Text(
               '💡 Tap an item to move it between Bill 1 and Bill 2. '
-              'Bill 2 will be saved to held bills.',
+                  'Bill 2 will be saved to held bills.',
               style: AppTheme.caption,
               textAlign: TextAlign.center,
             ),
@@ -196,7 +198,7 @@ class _SplitBillPageState extends State<SplitBillPage> {
               children: [
                 Container(
                   padding:
-                      EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+                  EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8.r),
@@ -256,7 +258,7 @@ class _SplitBillPageState extends State<SplitBillPage> {
         : item.quantity.toStringAsFixed(1);
 
     return InkWell(
-      onTap: () => _toggleItem(item.productId),
+      onTap: () => _toggleItem('${item.productId}-${item.saleUomId}'),  // FIX BUG#8
       borderRadius: BorderRadius.zero,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
@@ -312,11 +314,11 @@ class _SplitBillPageState extends State<SplitBillPage> {
   }
 
   Widget _buildBottomBar(
-    BuildContext context,
-    List<CartItem> bill1,
-    List<CartItem> bill2,
-    bool canConfirm,
-  ) {
+      BuildContext context,
+      List<CartItem> bill1,
+      List<CartItem> bill2,
+      bool canConfirm,
+      ) {
     return Container(
       padding: EdgeInsets.fromLTRB(16.w, 14.h, 16.w, 28.h),
       decoration: BoxDecoration(
@@ -341,7 +343,7 @@ class _SplitBillPageState extends State<SplitBillPage> {
                   children: [
                     Text('Bill 1',
                         style:
-                            AppTheme.caption.copyWith(color: AppTheme.primary)),
+                        AppTheme.caption.copyWith(color: AppTheme.primary)),
                     Text(
                       '${bill1.length} items · ${CurrencyFormatter.format(_total(bill1))}',
                       style: TextStyle(

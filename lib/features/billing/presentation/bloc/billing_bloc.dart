@@ -133,10 +133,10 @@ class CartState extends Equatable {
   });
 
   double get subtotal => items.fold(0.0, (s, i) => s + i.totalFor(billType));
-  double get totalAmount => subtotal - discountAmount;
+  double get totalAmount => (subtotal - discountAmount).clamp(0.0, double.infinity);  // FIX BUG#4
   double get totalProfit => items.fold(0.0, (s, i) => s + i.profitFor(billType));
   double get gstTotal => items.fold(0.0, (s, i) => s + i.gstAmountFor(billType));
-  int get itemCount => items.fold(0, (s, i) => s + i.quantity.toInt());
+  int get itemCount => items.where((i) => i.quantity > 0).length;  // FIX BUG#5: toInt() was truncating 0.5kg → 0 items
   bool get isEmpty => items.isEmpty;
 
   CartState copyWith({
@@ -209,11 +209,11 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
 
   void _onAdd(AddToCart e, Emitter<CartState> emit) {
     final idx = state.items.indexWhere(
-      (i) => i.productId == e.item.productId && i.saleUomId == e.item.saleUomId,
+          (i) => i.productId == e.item.productId && i.saleUomId == e.item.saleUomId,
     );
     final updated = List<CartItem>.from(state.items);
     if (idx >= 0) {
-      updated[idx] = updated[idx].copyWith(quantity: updated[idx].quantity + 1);
+      updated[idx] = updated[idx].copyWith(quantity: updated[idx].quantity + e.item.quantity);  // FIX BUG#3: was always +1, ignoring item quantity
     } else {
       updated.add(e.item);
     }
@@ -223,7 +223,7 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
   void _onRemove(RemoveFromCart e, Emitter<CartState> emit) => emit(
     state.copyWith(
         items: state.items.where((i) =>
-          !(i.productId == e.productId &&
+        !(i.productId == e.productId &&
             (e.saleUomId == null || i.saleUomId == e.saleUomId))
         ).toList()),
   );
@@ -236,10 +236,10 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
     emit(state.copyWith(
       items: state.items
           .map((i) =>
-            (i.productId == e.productId &&
-             (e.saleUomId == null || i.saleUomId == e.saleUomId))
-              ? i.copyWith(quantity: e.quantity)
-              : i)
+      (i.productId == e.productId &&
+          (e.saleUomId == null || i.saleUomId == e.saleUomId))
+          ? i.copyWith(quantity: e.quantity)
+          : i)
           .toList(),
     ));
   }
