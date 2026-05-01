@@ -6,7 +6,7 @@ import '../../../core/database/database_helper.dart';
 import '../../../core/ledger/ledger_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/currency_formatter.dart';
-import '../../purchase/domain/entities/purchase.dart';
+
 
 /// Purchase Return page.
 ///

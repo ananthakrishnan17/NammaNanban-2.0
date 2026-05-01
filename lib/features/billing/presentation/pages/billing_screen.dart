@@ -1316,4 +1316,3 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
     );
   }
 }
-}
