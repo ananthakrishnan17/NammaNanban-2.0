@@ -760,7 +760,7 @@ class ReportRepository {
     final results = <Map<String, dynamic>>[];
     for (final recipe in recipes) {
       final attributesStr = recipe['attributes'] as String? ?? '{}';
-      final List<dynamic> bomRaw;
+      late final List<dynamic> bomRaw;
       try {
         final decoded = jsonDecode(attributesStr) as Map<String, dynamic>?;
         bomRaw = decoded?['bom'] as List<dynamic>? ?? [];

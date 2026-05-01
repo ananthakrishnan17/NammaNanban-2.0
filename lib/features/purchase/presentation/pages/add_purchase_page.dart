@@ -435,7 +435,7 @@ class _YieldForecastCard extends StatelessWidget {
       for (final ing in bom) {
         if (ing.productId == null) continue;
         final avail = available[ing.productId!] ?? 0;
-        final possible = ing.quantity > 0 ? avail / ing.quantity : 0;
+        final possible = ing.quantity > 0 ? avail / ing.quantity : 0.0;
         if (possible < maxYield) {
           maxYield = possible;
           limitingName = ing.productName;
