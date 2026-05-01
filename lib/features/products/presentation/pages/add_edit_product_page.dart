@@ -29,9 +29,11 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   double _gstRate = 0.0;
   bool _gstInclusive = true;
   String _rateType = 'fixed';
-  String _itemType = 'physical'; // 'physical' | 'composite_recipe'
+  // 'physical' | 'raw_material' | 'composite_recipe' | 'service'
+  String _itemType = 'physical';
   List<BomIngredient> _bomIngredients = [];
   bool _isActive = true;
+  bool _enableWholesale = false;
   List<ProductUom> _pendingUoms = [];
   bool get isEditing => widget.product != null;
   bool get _isRecipe => _itemType == 'composite_recipe';
@@ -58,6 +60,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _isActive = p?.isActive ?? true;
     _itemType = p?.itemType ?? 'physical';
     _bomIngredients = p?.bomIngredients ?? [];
+    _enableWholesale = p != null && (p.retailPrice > 0 || p.wholesaleToRetailQty != 1.0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MastersBloc>().add(LoadAllMasters());
       if (isEditing && widget.product!.id != null) {
@@ -71,45 +74,69 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     super.dispose();
   }
 
-  void _save() {
+  void _save() async {
     if (!_formKey.currentState!.validate()) return;
     final now = DateTime.now();
     // For composite_recipe, purchase price = BOM cost
     final purchasePrice = _itemType == 'composite_recipe'
         ? _bomCost
-        : double.parse(_buyCtrl.text);
+        : double.tryParse(_buyCtrl.text) ?? 0.0;
     final p = ProductModel(
       id: widget.product?.id, name: _nameCtrl.text.trim(),
       categoryId: _selectedCategory?.id, categoryName: _selectedCategory?.name,
       brandId: _selectedBrand?.id, brandName: _selectedBrand?.name,
       uomId: _selectedUom?.id, uomShortName: _selectedUom?.shortName,
       purchasePrice: purchasePrice,
-      sellingPrice: double.parse(_sellCtrl.text),
+      // Open Rate: selling price is optional; default to 0
+      sellingPrice: double.tryParse(_sellCtrl.text) ?? 0.0,
       wholesalePrice: double.tryParse(_wsCtrl.text) ?? 0.0,
-      stockQuantity: double.parse(_stockCtrl.text),
+      stockQuantity: double.tryParse(_stockCtrl.text) ?? 0.0,
       unit: _selectedUom?.shortName ?? 'piece',
       lowStockThreshold: double.tryParse(_lowStockCtrl.text) ?? 5.0,
       gstRate: _gstRate, gstInclusive: _gstInclusive, rateType: _rateType,
       barcode: _barcodeCtrl.text.isEmpty ? null : _barcodeCtrl.text,
       hsnCode: _hsnCtrl.text.isEmpty ? null : _hsnCtrl.text,
       isActive: _isActive, createdAt: widget.product?.createdAt ?? now, updatedAt: now,
-      wholesaleUnit: _wsUnitCtrl.text.trim().isEmpty ? 'bag' : _wsUnitCtrl.text.trim(),
-      retailUnit: _retailUnitCtrl.text.trim().isEmpty ? 'kg' : _retailUnitCtrl.text.trim(),
-      wholesaleToRetailQty: double.tryParse(_wsToRetailQtyCtrl.text) ?? 1.0,
-      retailPrice: double.tryParse(_retailPriceCtrl.text) ?? 0.0,
+      wholesaleUnit: _enableWholesale
+          ? (_wsUnitCtrl.text.trim().isEmpty ? 'bag' : _wsUnitCtrl.text.trim())
+          : 'bag',
+      retailUnit: _enableWholesale
+          ? (_retailUnitCtrl.text.trim().isEmpty ? 'kg' : _retailUnitCtrl.text.trim())
+          : 'kg',
+      wholesaleToRetailQty: _enableWholesale
+          ? (double.tryParse(_wsToRetailQtyCtrl.text) ?? 1.0)
+          : 1.0,
+      retailPrice: _enableWholesale
+          ? (double.tryParse(_retailPriceCtrl.text) ?? 0.0)
+          : 0.0,
       itemType: _itemType,
       attributes: BomIngredient.listToAttributesJson(_bomIngredients),
     );
-    if (isEditing) {
-      context.read<ProductBloc>().add(UpdateProduct(p));
-      if (_pendingUoms.isNotEmpty) {
-        final uomRepo = ProductUomRepository(DatabaseHelper.instance);
-        uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
+    try {
+      if (isEditing) {
+        context.read<ProductBloc>().add(UpdateProduct(p));
+        if (_pendingUoms.isNotEmpty) {
+          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
+          uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
+        }
+      } else {
+        // For new products: save product, get new ID, then save pending UOMs
+        final newId = await context.read<ProductBloc>().repository.addProduct(p);
+        if (_pendingUoms.isNotEmpty && newId > 0) {
+          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
+          await uomRepo.saveAllUoms(newId, _pendingUoms);
+        }
+        if (mounted) context.read<ProductBloc>().add(LoadProducts());
       }
-    } else {
-      context.read<ProductBloc>().add(AddProduct(p));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save product: $e'), backgroundColor: Colors.red),
+        );
+        return;
+      }
     }
-    Navigator.pop(context);
+    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -117,7 +144,21 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? 'Edit Product' : 'Add Product'),
-        actions: [TextButton(onPressed: _save, child: Text('Save', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600, fontSize: 16.sp)))],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 12.h),
+          child: ElevatedButton(
+            onPressed: _save,
+            style: ElevatedButton.styleFrom(
+              minimumSize: Size(double.infinity, 50.h),
+            ),
+            child: Text(
+              isEditing ? 'Update Product' : 'Add Product',
+              style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
       ),
       body: BlocBuilder<MastersBloc, MastersState>(builder: (ctx, mastersState) {
         return BlocBuilder<ProductBloc, ProductState>(builder: (ctx2, productState) {
@@ -134,10 +175,18 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
 
               // PRODUCT TYPE
               _sec('🧩 Product Type'),
-              Row(children: [
-                Expanded(child: _typeBtn('physical', 'Physical', '📦', 'Regular stocked item')),
-                SizedBox(width: 10.w),
-                Expanded(child: _typeBtn('composite_recipe', 'Recipe / BOM', '🍳', 'Built from ingredients')),
+              Column(children: [
+                Row(children: [
+                  Expanded(child: _typeBtn('physical', 'Physical', '📦', 'Regular stocked item')),
+                  SizedBox(width: 10.w),
+                  Expanded(child: _typeBtn('raw_material', 'Raw Material', '🌾', 'Used in production')),
+                ]),
+                SizedBox(height: 10.h),
+                Row(children: [
+                  Expanded(child: _typeBtn('composite_recipe', 'Recipe / BOM', '🍳', 'Built from ingredients')),
+                  SizedBox(width: 10.w),
+                  Expanded(child: _typeBtn('service', 'Service', '🛠️', 'No stock tracking')),
+                ]),
               ]),
               SizedBox(height: 20.h),
 
@@ -195,8 +244,17 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                   SizedBox(width: 10.w),
                 ],
                 Expanded(child: TextFormField(controller: _sellCtrl, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Selling Price *', prefixText: '₹ '),
-                    validator: (v) { if (v!.isEmpty) return 'Required'; if (double.tryParse(v) == null) return 'Invalid'; return null; },
+                    decoration: InputDecoration(
+                      labelText: _rateType == 'open' ? 'Selling Price (optional)' : 'Selling Price *',
+                      prefixText: '₹ ',
+                      helperText: _rateType == 'open' ? 'Price entered at billing' : null,
+                    ),
+                    validator: (v) {
+                      if (_rateType == 'open') return null;
+                      if (v!.isEmpty) return 'Required';
+                      if (double.tryParse(v) == null) return 'Invalid';
+                      return null;
+                    },
                     onChanged: (_) => setState(() {}))),
               ]),
               SizedBox(height: 10.h),
@@ -206,7 +264,32 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                     onChanged: (_) => setState(() {})),
                 SizedBox(height: 8.h), _profitPreview(),
               ],
-              SizedBox(height: 20.h),
+              SizedBox(height: 10.h),
+
+              // ── BOM Builder (composite_recipe only, shown right after Pricing) ─
+              if (_isRecipe) ...[
+                _sec('🔧 Bill of Materials (Recipe)'),
+                _BomBuilderCard(
+                  products: productState is ProductsLoaded ? productState.products : [],
+                  ingredients: _bomIngredients,
+                  onChanged: (updated) => setState(() => _bomIngredients = updated),
+                ),
+                SizedBox(height: 8.h),
+                if (_bomIngredients.isNotEmpty)
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(10.r),
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      Text('Total BOM Cost', style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+                      Text('₹${_bomCost.toStringAsFixed(2)}', style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                SizedBox(height: 20.h),
+              ],
+              SizedBox(height: 10.h),
 
               _sec('🏷️ Rate Type'),
               Row(children: [
@@ -219,7 +302,10 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               _sec('📦 Stock & Unit'),
               Row(children: [
                 Expanded(child: TextFormField(controller: _stockCtrl, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Current Stock'),
+                    decoration: InputDecoration(
+                      labelText: isEditing ? 'Current Stock' : 'Opening Stock',
+                      helperText: isEditing ? null : 'Initial stock quantity',
+                    ),
                     validator: (v) => double.tryParse(v ?? '') == null ? 'Invalid' : null)),
                 SizedBox(width: 10.w),
                 Expanded(child: TextFormField(controller: _lowStockCtrl, keyboardType: TextInputType.number,
@@ -229,7 +315,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
 
               // UOM — inline quick add via MastersBloc.repository for real id
               SearchableDropdownWithAdd<UomUnit>(
-                label: 'Unit of Measure', hint: 'Select or create unit', icon: Icons.straighten,
+                label: 'Base Unit *', hint: 'Select or create base unit', icon: Icons.straighten,
                 selectedValue: _selectedUom, items: units,
                 itemLabel: (u) => '${u.name} (${u.shortName})', itemId: (u) => u.id,
                 onChanged: (u) => setState(() => _selectedUom = u),
@@ -284,44 +370,89 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
 
               _sec('⚖️ Wholesale / Retail Setup'),
               Container(
-                padding: EdgeInsets.all(14.w),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(12.r),
-                  border: Border.all(color: AppTheme.divider),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Configure if this product is sold in bulk (bags) and retail (kg)', style: AppTheme.caption),
-                  SizedBox(height: 12.h),
-                  Row(children: [
-                    Expanded(child: TextFormField(controller: _wsUnitCtrl,
-                        decoration: const InputDecoration(labelText: 'Wholesale Unit', hintText: 'e.g. bag'))),
-                    SizedBox(width: 10.w),
-                    Expanded(child: TextFormField(controller: _retailUnitCtrl,
-                        decoration: const InputDecoration(labelText: 'Retail Unit', hintText: 'e.g. kg'))),
-                  ]),
-                  SizedBox(height: 10.h),
-                  TextFormField(
-                    controller: _wsToRetailQtyCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                      labelText: 'Conversion: 1 ${_wsUnitCtrl.text.isEmpty ? 'wholesale unit' : _wsUnitCtrl.text} = ? ${_retailUnitCtrl.text.isEmpty ? 'retail units' : _retailUnitCtrl.text}',
-                      hintText: 'e.g. 22.0',
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  SizedBox(height: 10.h),
-                  TextFormField(
-                    controller: _retailPriceCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                      labelText: 'Retail Price (per ${_retailUnitCtrl.text.isEmpty ? 'retail unit' : _retailUnitCtrl.text})',
-                      prefixText: '₹ ',
-                      hintText: 'e.g. 80.0',
-                    ),
+                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider)),
+                child: Row(children: [
+                  Expanded(child: Text('Enable Bulk / Wholesale Sale', style: AppTheme.body)),
+                  Switch(
+                    value: _enableWholesale,
+                    onChanged: (v) => setState(() => _enableWholesale = v),
+                    activeColor: AppTheme.primary,
                   ),
                 ]),
               ),
+              if (_enableWholesale) ...[
+                SizedBox(height: 10.h),
+                Container(
+                  padding: EdgeInsets.all(14.w),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(12.r),
+                    border: Border.all(color: AppTheme.divider),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Configure bulk unit and retail breakdown', style: AppTheme.caption),
+                    SizedBox(height: 12.h),
+                    Row(children: [
+                      Expanded(child: TextFormField(controller: _wsUnitCtrl,
+                          decoration: const InputDecoration(labelText: 'Wholesale Unit', hintText: 'e.g. bag'),
+                          onChanged: (_) => setState(() {}))),
+                      SizedBox(width: 10.w),
+                      Expanded(child: TextFormField(controller: _retailUnitCtrl,
+                          decoration: const InputDecoration(labelText: 'Retail Unit', hintText: 'e.g. kg'),
+                          onChanged: (_) => setState(() {}))),
+                    ]),
+                    SizedBox(height: 10.h),
+                    TextFormField(
+                      controller: _wsToRetailQtyCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: '1 ${_wsUnitCtrl.text.isEmpty ? 'wholesale unit' : _wsUnitCtrl.text} = ? ${_retailUnitCtrl.text.isEmpty ? 'retail units' : _retailUnitCtrl.text}',
+                        hintText: 'e.g. 22.0',
+                      ),
+                      validator: (v) {
+                        if (!_enableWholesale) return null;
+                        final val = double.tryParse(v ?? '');
+                        if (val == null || val <= 0) return 'Enter conversion ratio (e.g. 22)';
+                        return null;
+                      },
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    // Live conversion preview
+                    Builder(builder: (ctx) {
+                      final qty = double.tryParse(_wsToRetailQtyCtrl.text) ?? 0;
+                      final wsUnit = _wsUnitCtrl.text.isEmpty ? 'bag' : _wsUnitCtrl.text;
+                      final rtUnit = _retailUnitCtrl.text.isEmpty ? 'kg' : _retailUnitCtrl.text;
+                      if (qty <= 0) return const SizedBox();
+                      return Padding(
+                        padding: EdgeInsets.only(top: 8.h),
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withOpacity(0.07),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Row(children: [
+                            Icon(Icons.info_outline, size: 14.sp, color: AppTheme.primary),
+                            SizedBox(width: 6.w),
+                            Text('1 $wsUnit = $qty $rtUnit', style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w600)),
+                          ]),
+                        ),
+                      );
+                    }),
+                    SizedBox(height: 10.h),
+                    TextFormField(
+                      controller: _retailPriceCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'Retail Price (per ${_retailUnitCtrl.text.isEmpty ? 'retail unit' : _retailUnitCtrl.text})',
+                        prefixText: '₹ ',
+                        hintText: 'e.g. 80.0',
+                      ),
+                    ),
+                  ]),
+                ),
+              ],
               SizedBox(height: 20.h),
 
               _sec('⚙️ Optional'),
@@ -334,67 +465,23 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ),
               SizedBox(height: 24.h),
 
-              // ── BOM Builder (composite_recipe only) ──────────────────────
-              if (_isRecipe) ...[
-                _sec('🔧 Bill of Materials (Recipe)'),
-                _BomBuilderCard(
-                  products: productState is ProductsLoaded ? productState.products : [],
-                  ingredients: _bomIngredients,
-                  onChanged: (updated) => setState(() => _bomIngredients = updated),
-                ),
-                SizedBox(height: 8.h),
-                if (_bomIngredients.isNotEmpty)
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary.withOpacity(0.07),
-                      borderRadius: BorderRadius.circular(10.r),
-                    ),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      Text('Total BOM Cost', style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
-                      Text('₹${_bomCost.toStringAsFixed(2)}', style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w700)),
-                    ]),
-                  ),
-                SizedBox(height: 24.h),
-              ],
-
               // ── Sale Units (Loose Sale) ───────────────────────────────────
               _sec('📏 Sale Units (Loose Sale)'),
-              if (!isEditing)
-                Container(
-                  padding: EdgeInsets.all(14.w),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(12.r),
-                    border: Border.all(color: AppTheme.divider),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.info_outline, color: AppTheme.textSecondary, size: 18.sp),
-                    SizedBox(width: 8.w),
-                    Expanded(child: Text(
-                      'Save the product first to configure loose sale units.',
-                      style: AppTheme.caption,
-                    )),
-                  ]),
-                )
-              else ...[
-                Builder(builder: (ctx) {
-                  final existingUoms = productState is ProductsLoaded
-                      ? productState.productUoms
-                      : const <ProductUom>[];
-                  return MultiUomEditor(
-                    key: ValueKey('uoms_${existingUoms.length}'),
-                    productId: widget.product!.id!,
-                    availableUnits: units,
-                    initialUoms: existingUoms,
-                    onChanged: (uoms) => setState(() => _pendingUoms = uoms),
-                  );
-                }),
-              ],
-              SizedBox(height: 24.h),
-
-              ElevatedButton(onPressed: _save, child: Text(isEditing ? 'Update Product' : 'Add Product')),
-              SizedBox(height: 40.h),
+              Builder(builder: (ctx) {
+                final existingUoms = productState is ProductsLoaded
+                    ? productState.productUoms
+                    : const <ProductUom>[];
+                // Use -1 as placeholder productId for new products; saveAllUoms sets the real ID
+                final editorProductId = isEditing ? widget.product!.id! : -1;
+                return MultiUomEditor(
+                  key: ValueKey('uoms_${editorProductId}_${existingUoms.length}'),
+                  productId: editorProductId,
+                  availableUnits: units,
+                  initialUoms: existingUoms,
+                  onChanged: (uoms) => setState(() => _pendingUoms = uoms),
+                );
+              }),
+              SizedBox(height: 80.h),
             ])),
           );
         });
