@@ -8,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../printer/data/repositories/printer_settings_repository.dart';
+import '../../../printer/domain/entities/bill_template.dart';
+import '../../../printer/services/bill_template_renderer.dart';
 import '../../../printer/services/printer_service.dart';
 import '../../data/repositories/billing_repository_impl.dart';
 import '../../domain/entities/bill.dart';
@@ -49,10 +52,52 @@ class _BillViewScreenState extends State<BillViewScreen> {
   }
 
   Future<void> _onPrint() async {
-    final printed = await PrinterService.instance.printBill(widget.bill);
+    final config = await PrinterSettingsRepository.instance.loadConfig();
+    final prefs = await SharedPreferences.getInstance();
+    final shopAddress = prefs.getString('shop_address') ?? '';
+    final shopGstin = prefs.getString('shop_gstin') ?? '';
+
+    if (config.template.isPdf) {
+      // ── A4 / WhatsApp PDF ──────────────────────────────────────────────
+      final ok = await BillTemplateRenderer.sharePdf(
+        bill: widget.bill,
+        config: config,
+        shopName: _shopName,
+        shopAddress: shopAddress,
+        shopPhone: _shopPhone,
+        shopGstin: shopGstin.isNotEmpty ? shopGstin : null,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok ? '✅ PDF shared!' : '⚠️ Could not generate PDF'),
+        backgroundColor: ok ? AppTheme.accent : AppTheme.warning,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+      ));
+      return;
+    }
+
+    // ── Thermal print ──────────────────────────────────────────────────────
+    if (!PrinterService.instance.isConnected) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('⚠️ Printer not connected'),
+        backgroundColor: AppTheme.warning,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+      ));
+      return;
+    }
+
+    final printed = await PrinterService.instance
+        .printBillWithTemplate(widget.bill, config);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(printed ? '✅ Printed successfully!' : '⚠️ Printer not connected'),
+      content: Text(printed ? '✅ Printed successfully!' : '⚠️ Print failed — please try again'),
       backgroundColor: printed ? AppTheme.accent : AppTheme.warning,
       behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 3),

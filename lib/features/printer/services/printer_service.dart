@@ -2,6 +2,8 @@ import 'package:blue_thermal_printer/blue_thermal_printer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../billing/domain/entities/bill.dart';
 import '../../../core/utils/currency_formatter.dart';
+import '../domain/entities/bill_template.dart';
+import 'bill_template_renderer.dart';
 
 class PrinterService {
   static final PrinterService instance = PrinterService._();
@@ -49,6 +51,39 @@ class PrinterService {
     if (text.length > width) text = text.substring(0, width);
     // Right align or left align
     return rightAlign ? text.padLeft(width) : text.padRight(width);
+  }
+
+  // ── Template-aware print ────────────────────────────────────────────────────
+  /// Prints [bill] using the provided [config].
+  ///
+  /// For thermal templates (1–4) the method writes to the connected
+  /// [BlueThermalPrinter].  Template 5 is a PDF-only template — callers
+  /// should call [BillTemplateRenderer.sharePdf] or [BillTemplateRenderer.printPdf]
+  /// directly for that case and skip this method.
+  Future<bool> printBillWithTemplate(
+    Bill bill,
+    BillTemplateConfig config,
+  ) async {
+    if (!isConnected) return false;
+    if (config.template.isPdf) return false; // PDF handled separately
+
+    final prefs = await SharedPreferences.getInstance();
+    final shopName = prefs.getString('shop_name') ?? 'My Shop';
+    final shopAddress = prefs.getString('shop_address') ?? '';
+    final shopPhone = prefs.getString('shop_phone') ?? '';
+    final shopGstin = prefs.getString('shop_gstin') ?? '';
+    final cashierName = prefs.getString('cashier_name') ?? '';
+
+    return BillTemplateRenderer.printThermal(
+      printer: _printer,
+      bill: bill,
+      config: config,
+      shopName: shopName,
+      shopAddress: shopAddress,
+      shopPhone: shopPhone,
+      shopGstin: shopGstin.isNotEmpty ? shopGstin : null,
+      cashierName: cashierName.isNotEmpty ? cashierName : null,
+    );
   }
 
   // ── Print Bill ──────────────────────────────────────────────────────────────

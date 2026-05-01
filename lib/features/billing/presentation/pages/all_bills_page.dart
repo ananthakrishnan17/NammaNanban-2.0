@@ -7,6 +7,9 @@ import 'package:shimmer/shimmer.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../printer/data/repositories/printer_settings_repository.dart';
+import '../../../printer/domain/entities/bill_template.dart';
+import '../../../printer/services/bill_template_renderer.dart';
 import '../../../printer/services/printer_service.dart';
 import '../../data/repositories/billing_repository_impl.dart';
 import '../../domain/entities/bill.dart';
@@ -514,7 +517,34 @@ class _BillDetailSheetState extends State<_BillDetailSheet> {
 
   Future<void> _onPrint() async {
     if (_fullBill == null) return;
-    final printed = await PrinterService.instance.printBill(_fullBill!);
+    final config = await PrinterSettingsRepository.instance.loadConfig();
+
+    if (config.template.isPdf) {
+      final prefs = await SharedPreferences.getInstance();
+      final shopName = prefs.getString('shop_name') ?? 'My Shop';
+      final shopAddress = prefs.getString('shop_address') ?? '';
+      final shopPhone = prefs.getString('shop_phone') ?? '';
+      final shopGstin = prefs.getString('shop_gstin') ?? '';
+      final ok = await BillTemplateRenderer.sharePdf(
+        bill: _fullBill!,
+        config: config,
+        shopName: shopName,
+        shopAddress: shopAddress,
+        shopPhone: shopPhone,
+        shopGstin: shopGstin.isNotEmpty ? shopGstin : null,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok ? '✅ PDF shared!' : '⚠️ Could not generate PDF'),
+        backgroundColor: ok ? AppTheme.accent : AppTheme.warning,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
+      ));
+      return;
+    }
+
+    final printed = await PrinterService.instance.printBillWithTemplate(_fullBill!, config);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(printed ? '✅ Printed successfully!' : '⚠️ Printer not connected'),

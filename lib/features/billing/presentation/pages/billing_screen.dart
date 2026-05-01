@@ -6,6 +6,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../printer/data/repositories/printer_settings_repository.dart';
+import '../../../printer/domain/entities/bill_template.dart';
+import '../../../printer/services/printer_service.dart';
 import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
@@ -198,7 +201,8 @@ class _BillingScreenState extends State<BillingScreen> {
   // ✅ FIX: Central handler called after bill is saved successfully.
   //         1. Hides cart so UI feels responsive
   //         2. Resets cart via ResetAfterSave
-  //         3. Navigates to BillViewScreen (print happens there on demand)
+  //         3. Auto-prints if configured
+  //         4. Navigates to BillViewScreen (print happens there on demand)
   Future<void> _onBillSaved(BuildContext context, Bill bill) async {
     // Close the payment bottom sheet first (it's the topmost route)
     if (Navigator.of(context).canPop()) {
@@ -226,11 +230,67 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
     );
 
+    // ── Auto-print if configured ─────────────────────────────────────────
+    // Printing must never block bill save or navigation.
+    _tryAutoPrint(bill);
+
     // Now safe to push BillViewScreen (bottom sheet is gone)
+    if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => BillViewScreen(bill: bill)),
     );
+  }
+
+  /// Fire-and-forget auto-print.  Errors are swallowed so they never block
+  /// the billing flow; a snackbar informs the user on failure/no printer.
+  Future<void> _tryAutoPrint(Bill bill) async {
+    try {
+      final config = await PrinterSettingsRepository.instance.loadConfig();
+      if (!config.autoPrint) return;
+
+      if (config.template.isPdf) {
+        // PDF template: skip silent auto-print — share is user-initiated.
+        return;
+      }
+
+      if (!PrinterService.instance.isConnected) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                const Text('Bill saved. Printer not connected.'),
+            backgroundColor: AppTheme.warning,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+            margin: EdgeInsets.only(
+                bottom: 24.h, left: 16.w, right: 16.w),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10.r)),
+          ),
+        );
+        return;
+      }
+
+      final printed =
+          await PrinterService.instance.printBillWithTemplate(bill, config);
+      if (!printed && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Bill saved. Print failed — please reprint.'),
+            backgroundColor: AppTheme.warning,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+            margin: EdgeInsets.only(
+                bottom: 24.h, left: 16.w, right: 16.w),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10.r)),
+          ),
+        );
+      }
+    } catch (_) {
+      // Silently ignore — bill is already saved
+    }
   }
 
   @override
