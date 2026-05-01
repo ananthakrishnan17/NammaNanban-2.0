@@ -89,7 +89,7 @@ class ProductRepositoryImpl implements ProductRepository {
     if (product.stockQuantity > 0) {
       try {
         final ledger = LedgerService.instance;
-        final licenseId = await ledger.getLicenseId();
+        final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
         final nowStr = DateTime.now().toIso8601String();
         final inventoryValue = product.purchasePrice * product.stockQuantity;
         await ledger.recordTransaction(
@@ -146,7 +146,7 @@ class ProductRepositoryImpl implements ProductRepository {
       // Decrease:  DR Expense    / CR Inventory
       try {
         final ledger = LedgerService.instance;
-        final licenseId = await ledger.getLicenseId();
+        final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
         final nowStr = DateTime.now().toIso8601String();
 
         // Look up product purchase price for inventory valuation
