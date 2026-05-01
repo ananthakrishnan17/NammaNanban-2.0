@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
@@ -54,8 +57,11 @@ class BillingRepositoryImpl implements BillingRepository {
     int? customerId, String? customerName, String? customerAddress, String? customerGstin,
     bool isInterState = false,  // FIX BUG#2: pass true for inter-state (IGST) transactions
   }) async {
+    debugPrint('[saveBill] started — items: ${items.length}, billType: $billType');
+
     final db = await _dbHelper.database;
     final now = DateTime.now();
+    final nowStr = now.toIso8601String();
     final bt = billType == 'wholesale' ? BillType.wholesale : BillType.retail;
 
     // If split payments provided, override paymentMode and build summary string
@@ -86,6 +92,13 @@ class BillingRepositoryImpl implements BillingRepository {
     // FIX BUG#1: generate bill number ONCE and reuse for both DB insert and returned object
     final String billNum = _genBillNumber();
 
+    // ── IMPORTANT: resolve licenseId BEFORE the transaction ─────────────────
+    // LedgerService.resolveLicenseId queries the main DB connection. If called
+    // inside db.transaction(), sqflite deadlocks because the transaction holds
+    // an exclusive lock on the same connection. Pre-fetch it here.
+    final String licenseId = await LedgerService.resolveLicenseId(_dbHelper);
+    debugPrint('[saveBill] licenseId resolved: $licenseId');
+
     final bill = await db.transaction((txn) async {
       final billId = await txn.insert('bills', {
         'bill_number': billNum, 'bill_type': billType,  // FIX BUG#1
@@ -96,8 +109,9 @@ class BillingRepositoryImpl implements BillingRepository {
         'cgst_total': cgstAmount, 'sgst_total': sgstAmount, 'igst_total': igstAmount,  // FIX BUG#2
         'payment_mode': effectivePaymentMode,
         'split_payment_summary': splitSummary,
-        'created_at': now.toIso8601String(),
+        'created_at': nowStr,
       });
+      debugPrint('[saveBill] bill inserted: id=$billId, number=$billNum');
 
       // Store individual split entries
       if (isSplit) {
@@ -126,6 +140,8 @@ class BillingRepositoryImpl implements BillingRepository {
           'conversion_qty': cartItem.conversionQty,
           'sale_type': itemSaleType,
         });
+        debugPrint('[saveBill] item inserted: id=$itemId, product=${cartItem.productName}');
+
         // Deduct stock — wholesale items deduct wholesaleToRetailQty per unit
         final double baseQtyToDeduct;
         if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
@@ -135,7 +151,8 @@ class BillingRepositoryImpl implements BillingRepository {
         }
         await txn.rawUpdate(
             'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
-            [baseQtyToDeduct, now.toIso8601String(), cartItem.productId]);
+            [baseQtyToDeduct, nowStr, cartItem.productId]);
+        debugPrint('[saveBill] stock deducted: product=${cartItem.productId}, qty=$baseQtyToDeduct');
 
         // BOM deduction: if composite_recipe, deduct each ingredient's stock
         try {
@@ -155,7 +172,7 @@ class BillingRepositoryImpl implements BillingRepository {
                 final totalIngQty = ingQty * baseQtyToDeduct;
                 await txn.rawUpdate(
                     'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
-                    [totalIngQty, now.toIso8601String(), ingId]);
+                    [totalIngQty, nowStr, ingId]);
               }
             }
           }
@@ -166,17 +183,18 @@ class BillingRepositoryImpl implements BillingRepository {
             unitPrice: effectivePrice, purchasePrice: cartItem.purchasePrice,
             gstRate: cartItem.gstRate, gstAmount: gstAmt, totalPrice: itemTotal));
       }
+      debugPrint('[saveBill] items inserted: count=${billItems.length}');
 
       // ── Double-entry ledger ─────────────────────────────────────────────
-      // Sale journal:
+      // Sale journal (single recordTransaction call — no duplicate writes):
       //   DR Asset (cash/bank)     totalAmount
       //   CR Income (sales)        totalAmount
       //   DR COGS                  totalCOGS  (per item: purchasePrice × baseQty)
       //   CR Inventory             totalCOGS
+      //
+      // licenseId is resolved BEFORE the transaction to avoid sqflite deadlock.
       try {
         final ledger = LedgerService.instance;
-        final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
-        final nowStr = now.toIso8601String();
 
         final ledgerEntries = <LedgerEntryInput>[];
 
@@ -207,9 +225,6 @@ class BillingRepositoryImpl implements BillingRepository {
           LedgerEntryInput(accountType: 'income', direction: 'credit', amount: totalAmount),
         ]);
 
-        // Adjust: if COGS entries are present, they are balanced within
-        // themselves (each item has paired cogs-debit + inventory-credit).
-
         await ledger.recordTransaction(
           executor: txn,
           type: 'sale',
@@ -225,10 +240,11 @@ class BillingRepositoryImpl implements BillingRepository {
           createdAt: nowStr,
           entries: ledgerEntries,
         );
-      } catch (_) {
-        // Ledger write failure must NOT block the sale — re-throw so
-        // the transaction rolls back to keep data consistent.
-        rethrow;
+        debugPrint('[saveBill] ledger written: ${ledgerEntries.length} entries');
+      } catch (ledgerErr) {
+        // Ledger write failure must NOT block the sale.
+        // Log the error and continue — the bill and stock deduction are preserved.
+        debugPrint('[saveBill] ledger write failed (non-fatal): $ledgerErr');
       }
 
       return Bill(id: billId, billNumber: billNum, billType: billType,  // FIX BUG#1
@@ -241,30 +257,36 @@ class BillingRepositoryImpl implements BillingRepository {
           customerName: customerName, customerAddress: customerAddress,
           customerGstin: customerGstin, createdAt: now);
     });
+    debugPrint('[saveBill] transaction complete: bill #${bill.billNumber}, id=${bill.id}');
 
-    // Enqueue bill for cloud sync (no-op for offline licenses)
-    await SyncService.instance.enqueue(
-      tableName: 'bills_sync',
-      recordId: bill.id.toString(),
-      operation: SyncOperation.create,
-      payload: {
-        'local_bill_id': bill.id,
-        'bill_number': bill.billNumber,
-        'bill_type': bill.billType,
-        'customer_name': bill.customerName,
-        'customer_address': bill.customerAddress,
-        'customer_gstin': bill.customerGstin,
-        'total_amount': bill.totalAmount,
-        'total_profit': bill.totalProfit,
-        'discount_amount': bill.discountAmount,
-        'gst_total': bill.gstTotal,
-        'payment_mode': bill.paymentMode,
-        'split_payment_summary': bill.splitPaymentSummary,
-        'items_json': _billItemsPayload(bill.items),
-        'created_at': bill.createdAt.toIso8601String(),
-      },
+    // Enqueue bill for cloud sync (no-op for offline licenses).
+    // Run in a fire-and-forget fashion so a sync failure never blocks billing.
+    unawaited(
+      SyncService.instance.enqueue(
+        tableName: 'bills_sync',
+        recordId: bill.id.toString(),
+        operation: SyncOperation.create,
+        payload: {
+          'local_bill_id': bill.id,
+          'bill_number': bill.billNumber,
+          'bill_type': bill.billType,
+          'customer_name': bill.customerName,
+          'customer_address': bill.customerAddress,
+          'customer_gstin': bill.customerGstin,
+          'total_amount': bill.totalAmount,
+          'total_profit': bill.totalProfit,
+          'discount_amount': bill.discountAmount,
+          'gst_total': bill.gstTotal,
+          'payment_mode': bill.paymentMode,
+          'split_payment_summary': bill.splitPaymentSummary,
+          'items_json': _billItemsPayload(bill.items),
+          'created_at': bill.createdAt.toIso8601String(),
+        },
+      ).then((_) => debugPrint('[saveBill] sync queued'))
+       .catchError((Object e) => debugPrint('[saveBill] sync enqueue failed (non-fatal): $e')),
     );
 
+    debugPrint('[saveBill] completed: bill #${bill.billNumber}');
     return bill;
   }
 

@@ -236,13 +236,27 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<BillingBloc, CartState>(
+      // Fire whenever isSaving transitions from true → false (success OR error)
       listenWhen: (prev, curr) =>
-          prev.isSaving == true &&
-          curr.isSaving == false &&
-          curr.lastSavedBill != null,
+          prev.isSaving == true && curr.isSaving == false,
       listener: (context, state) {
-        final bill = state.lastSavedBill!;
-        _onBillSaved(context, bill);
+        if (state.lastSavedBill != null) {
+          _onBillSaved(context, state.lastSavedBill!);
+        } else if (state.errorMessage != null) {
+          // Show error regardless of _showCart state
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ ${state.errorMessage}'),
+              backgroundColor: AppTheme.danger,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 4),
+              margin: EdgeInsets.only(bottom: 24.h, left: 16.w, right: 16.w),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10.r)),
+            ),
+          );
+        }
       },
       child: Scaffold(
         backgroundColor: AppTheme.surface,
@@ -696,18 +710,6 @@ class _BillingScreenState extends State<BillingScreen> {
     return BlocBuilder<BillingBloc, CartState>(
       builder: (context, state) {
         final cart = state as CartState;
-
-        // ✅ Show error if save failed
-        if (cart.errorMessage != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Error: ${cart.errorMessage}'),
-              backgroundColor: AppTheme.danger,
-              behavior: SnackBarBehavior.floating,
-            ));
-          });
-        }
 
         return Column(
           children: [
