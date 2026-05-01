@@ -22,7 +22,6 @@ class AddEditProductPage extends StatefulWidget {
 class _AddEditProductPageState extends State<AddEditProductPage> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameCtrl, _buyCtrl, _sellCtrl, _wsCtrl, _stockCtrl, _lowStockCtrl, _barcodeCtrl, _hsnCtrl;
-  late TextEditingController _wsUnitCtrl, _retailUnitCtrl, _wsToRetailQtyCtrl, _retailPriceCtrl;
   Category? _selectedCategory;
   Brand? _selectedBrand;
   UomUnit? _selectedUom;
@@ -33,8 +32,8 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   String _itemType = 'physical';
   List<BomIngredient> _bomIngredients = [];
   bool _isActive = true;
-  bool _enableWholesale = false;
-  List<ProductUom> _pendingUoms = [];
+  List<ProductUom> _pendingSaleUoms = [];
+  List<ProductUom> _pendingPurchaseUoms = [];
   bool get isEditing => widget.product != null;
   bool get _isRecipe => _itemType == 'composite_recipe';
   double get _bomCost => _bomIngredients.fold(0.0, (s, i) => s + i.totalCost);
@@ -50,27 +49,30 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _lowStockCtrl = TextEditingController(text: p?.lowStockThreshold.toString() ?? '5');
     _barcodeCtrl = TextEditingController(text: p?.barcode ?? '');
     _hsnCtrl = TextEditingController(text: p?.hsnCode ?? '');
-    _wsUnitCtrl = TextEditingController(text: p?.wholesaleUnit ?? 'bag');
-    _retailUnitCtrl = TextEditingController(text: p?.retailUnit ?? 'kg');
-    _wsToRetailQtyCtrl = TextEditingController(text: p != null ? p.wholesaleToRetailQty.toString() : '1.0');
-    _retailPriceCtrl = TextEditingController(text: p != null && p.retailPrice > 0 ? p.retailPrice.toStringAsFixed(2) : '');
     _gstRate = p?.gstRate ?? 0.0;
     _gstInclusive = p?.gstInclusive ?? true;
     _rateType = p?.rateType ?? 'fixed';
     _isActive = p?.isActive ?? true;
     _itemType = p?.itemType ?? 'physical';
     _bomIngredients = p?.bomIngredients ?? [];
-    _enableWholesale = p != null && (p.retailPrice > 0 || p.wholesaleToRetailQty != 1.0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MastersBloc>().add(LoadAllMasters());
       if (isEditing && widget.product!.id != null) {
         context.read<ProductBloc>().add(LoadProductUoms(widget.product!.id!));
+        // Load purchase uoms directly
+        _loadPurchaseUoms(widget.product!.id!);
       }
     });
   }
 
+  Future<void> _loadPurchaseUoms(int productId) async {
+    final repo = ProductUomRepository(DatabaseHelper.instance);
+    final uoms = await repo.getPurchaseUomsForProduct(productId);
+    if (mounted) setState(() => _pendingPurchaseUoms = uoms);
+  }
+
   @override void dispose() {
-    for (final c in [_nameCtrl,_buyCtrl,_sellCtrl,_wsCtrl,_stockCtrl,_lowStockCtrl,_barcodeCtrl,_hsnCtrl,_wsUnitCtrl,_retailUnitCtrl,_wsToRetailQtyCtrl,_retailPriceCtrl]) c.dispose();
+    for (final c in [_nameCtrl,_buyCtrl,_sellCtrl,_wsCtrl,_stockCtrl,_lowStockCtrl,_barcodeCtrl,_hsnCtrl]) c.dispose();
     super.dispose();
   }
 
@@ -97,34 +99,33 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       barcode: _barcodeCtrl.text.isEmpty ? null : _barcodeCtrl.text,
       hsnCode: _hsnCtrl.text.isEmpty ? null : _hsnCtrl.text,
       isActive: _isActive, createdAt: widget.product?.createdAt ?? now, updatedAt: now,
-      wholesaleUnit: _enableWholesale
-          ? (_wsUnitCtrl.text.trim().isEmpty ? 'bag' : _wsUnitCtrl.text.trim())
-          : 'bag',
-      retailUnit: _enableWholesale
-          ? (_retailUnitCtrl.text.trim().isEmpty ? 'kg' : _retailUnitCtrl.text.trim())
-          : 'kg',
-      wholesaleToRetailQty: _enableWholesale
-          ? (double.tryParse(_wsToRetailQtyCtrl.text) ?? 1.0)
-          : 1.0,
-      retailPrice: _enableWholesale
-          ? (double.tryParse(_retailPriceCtrl.text) ?? 0.0)
-          : 0.0,
+      // Legacy wholesale fields kept for backward compatibility with existing
+      // data (v9 columns). These are not surfaced in the UI but must be
+      // preserved so existing bill and report queries continue to work.
+      // TODO(v14): evaluate removing once all devices migrate off v9 data.
+      wholesaleUnit: widget.product?.wholesaleUnit ?? 'bag',
+      retailUnit: widget.product?.retailUnit ?? 'kg',
+      wholesaleToRetailQty: widget.product?.wholesaleToRetailQty ?? 1.0,
+      retailPrice: widget.product?.retailPrice ?? 0.0,
       itemType: _itemType,
       attributes: BomIngredient.listToAttributesJson(_bomIngredients),
     );
     try {
+      final uomRepo = ProductUomRepository(DatabaseHelper.instance);
       if (isEditing) {
         context.read<ProductBloc>().add(UpdateProduct(p));
-        if (_pendingUoms.isNotEmpty) {
-          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
-          uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
-        }
+        await uomRepo.saveAllUoms(widget.product!.id!, _pendingSaleUoms, 'sale');
+        await uomRepo.saveAllUoms(widget.product!.id!, _pendingPurchaseUoms, 'purchase');
       } else {
         // For new products: save product, get new ID, then save pending UOMs
         final newId = await context.read<ProductBloc>().repository.addProduct(p);
-        if (_pendingUoms.isNotEmpty && newId > 0) {
-          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
-          await uomRepo.saveAllUoms(newId, _pendingUoms);
+        if (newId > 0) {
+          if (_pendingSaleUoms.isNotEmpty) {
+            await uomRepo.saveAllUoms(newId, _pendingSaleUoms, 'sale');
+          }
+          if (_pendingPurchaseUoms.isNotEmpty) {
+            await uomRepo.saveAllUoms(newId, _pendingPurchaseUoms, 'purchase');
+          }
         }
         if (mounted) context.read<ProductBloc>().add(LoadProducts());
       }
@@ -190,7 +191,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ]),
               SizedBox(height: 20.h),
 
-              // CATEGORY — inline quick add via ProductBloc.repository (direct DB call)
+              // CATEGORY
               SearchableDropdownWithAdd<Category>(
                 label: 'Category', hint: 'Select or create category', icon: Icons.category,
                 selectedValue: _selectedCategory, items: categories,
@@ -198,15 +199,11 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 onChanged: (c) => setState(() => _selectedCategory = c),
                 addNewLabel: 'Create Category',
                 onAddNew: (name) async {
-                  // ✅ FIXED: Use repository getter directly — no more dynamic cast
                   final bloc = context.read<ProductBloc>();
                   final newCategory = Category(name: name, icon: '📦', color: '#FF6B35');
                   final id = await bloc.repository.addCategory(newCategory);
-                  // Reload so the dropdown list refreshes
                   bloc.add(LoadProducts());
-                  // Wait for reload
                   await Future.delayed(const Duration(milliseconds: 400));
-                  // Return the created category with the real DB id
                   final created = Category(id: id, name: name, icon: '📦', color: '#FF6B35');
                   setState(() => _selectedCategory = created);
                   return created;
@@ -214,7 +211,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ),
               SizedBox(height: 10.h),
 
-              // BRAND — inline quick add via MastersBloc + direct DB call
+              // BRAND
               SearchableDropdownWithAdd<Brand>(
                 label: 'Brand', hint: 'Select or create brand', icon: Icons.branding_watermark,
                 selectedValue: _selectedBrand, items: brands,
@@ -222,7 +219,6 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 onChanged: (b) => setState(() => _selectedBrand = b),
                 addNewLabel: 'Create Brand',
                 onAddNew: (name) async {
-                  // ✅ FIXED: Use MastersBloc.repository directly for real id
                   final bloc = context.read<MastersBloc>();
                   final id = await bloc.repository.addBrand(name);
                   bloc.add(LoadAllMasters());
@@ -266,7 +262,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ],
               SizedBox(height: 10.h),
 
-              // ── BOM Builder (composite_recipe only, shown right after Pricing) ─
+              // ── BOM Builder (composite_recipe only) ─────────────────────────
               if (_isRecipe) ...[
                 _sec('🔧 Bill of Materials (Recipe)'),
                 _BomBuilderCard(
@@ -299,41 +295,117 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ]),
               SizedBox(height: 20.h),
 
-              _sec('📦 Stock & Unit'),
-              Row(children: [
-                Expanded(child: TextFormField(controller: _stockCtrl, keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: isEditing ? 'Current Stock' : 'Opening Stock',
-                      helperText: isEditing ? null : 'Initial stock quantity',
+              // ── BASE STOCK UNIT ──────────────────────────────────────────────
+              _sec('📦 Base Stock Unit'),
+              Container(
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(12.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  // Helper chip
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8.r),
                     ),
-                    validator: (v) => double.tryParse(v ?? '') == null ? 'Invalid' : null)),
-                SizedBox(width: 10.w),
-                Expanded(child: TextFormField(controller: _lowStockCtrl, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Low Stock Alert'))),
-              ]),
-              SizedBox(height: 10.h),
-
-              // UOM — inline quick add via MastersBloc.repository for real id
-              SearchableDropdownWithAdd<UomUnit>(
-                label: 'Base Unit *', hint: 'Select or create base unit', icon: Icons.straighten,
-                selectedValue: _selectedUom, items: units,
-                itemLabel: (u) => '${u.name} (${u.shortName})', itemId: (u) => u.id,
-                onChanged: (u) => setState(() => _selectedUom = u),
-                addNewLabel: 'Create Unit',
-                onAddNew: (name) async {
-                  // ✅ FIXED: Use MastersBloc.repository directly for real id
-                  final bloc = context.read<MastersBloc>();
-                  final shortName = name.length > 4 ? name.substring(0, 4) : name;
-                  final newUnit = UomUnit(name: name, shortName: shortName, createdAt: DateTime.now());
-                  final id = await bloc.repository.addUnit(newUnit);
-                  bloc.add(LoadAllMasters());
-                  await Future.delayed(const Duration(milliseconds: 400));
-                  final created = UomUnit(id: id, name: name, shortName: shortName, createdAt: DateTime.now());
-                  setState(() => _selectedUom = created);
-                  return created;
-                },
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.info_outline, size: 14.sp, color: AppTheme.primary),
+                      SizedBox(width: 6.w),
+                      Flexible(child: Text('All stock will be calculated in this unit.',
+                          style: AppTheme.caption.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w500))),
+                    ]),
+                  ),
+                  SizedBox(height: 12.h),
+                  Row(children: [
+                    Expanded(child: TextFormField(controller: _stockCtrl, keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: isEditing ? 'Current Stock' : 'Opening Stock',
+                          helperText: isEditing ? null : 'Initial stock quantity',
+                        ),
+                        validator: (v) => double.tryParse(v ?? '') == null ? 'Invalid' : null)),
+                    SizedBox(width: 10.w),
+                    Expanded(child: TextFormField(controller: _lowStockCtrl, keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Low Stock Alert'))),
+                  ]),
+                  SizedBox(height: 12.h),
+                  // UOM picker
+                  SearchableDropdownWithAdd<UomUnit>(
+                    label: 'Base Unit *', hint: 'Select or create base unit', icon: Icons.straighten,
+                    selectedValue: _selectedUom, items: units,
+                    itemLabel: (u) => '${u.name} (${u.shortName})', itemId: (u) => u.id,
+                    onChanged: (u) => setState(() => _selectedUom = u),
+                    addNewLabel: 'Create Unit',
+                    onAddNew: (name) async {
+                      final bloc = context.read<MastersBloc>();
+                      final shortName = name.length > 4 ? name.substring(0, 4) : name;
+                      final newUnit = UomUnit(name: name, shortName: shortName, createdAt: DateTime.now());
+                      final id = await bloc.repository.addUnit(newUnit);
+                      bloc.add(LoadAllMasters());
+                      await Future.delayed(const Duration(milliseconds: 400));
+                      final created = UomUnit(id: id, name: name, shortName: shortName, createdAt: DateTime.now());
+                      setState(() => _selectedUom = created);
+                      return created;
+                    },
+                  ),
+                ]),
               ),
-              SizedBox(height: 20.h),
+              SizedBox(height: 24.h),
+
+              // ── PURCHASE UNITS ──────────────────────────────────────────────
+              _sec('🛒 Purchase Units'),
+              Container(
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Builder(builder: (ctx) {
+                  final existingPurchaseUoms = _pendingPurchaseUoms;
+                  final editorProductId = isEditing ? widget.product!.id! : -1;
+                  return MultiUomEditor(
+                    key: ValueKey('purchase_uoms_${editorProductId}_${existingPurchaseUoms.length}'),
+                    productId: editorProductId,
+                    availableUnits: units,
+                    initialUoms: existingPurchaseUoms,
+                    mode: UomEditorMode.purchase,
+                    baseUnitShortName: _selectedUom?.shortName ?? '',
+                    onChanged: (uoms) => setState(() => _pendingPurchaseUoms = uoms),
+                  );
+                }),
+              ),
+              SizedBox(height: 24.h),
+
+              // ── SALE UNITS & PRICES ─────────────────────────────────────────
+              _sec('💰 Sale Units & Prices'),
+              Container(
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Builder(builder: (ctx) {
+                  final existingSaleUoms = productState is ProductsLoaded
+                      ? productState.productUoms
+                      : const <ProductUom>[];
+                  final editorProductId = isEditing ? widget.product!.id! : -1;
+                  return MultiUomEditor(
+                    key: ValueKey('sale_uoms_${editorProductId}_${existingSaleUoms.length}'),
+                    productId: editorProductId,
+                    availableUnits: units,
+                    initialUoms: existingSaleUoms,
+                    mode: UomEditorMode.sale,
+                    baseUnitShortName: _selectedUom?.shortName ?? '',
+                    onChanged: (uoms) => setState(() => _pendingSaleUoms = uoms),
+                  );
+                }),
+              ),
+              SizedBox(height: 24.h),
 
               _sec('🧾 GST Settings'),
               Wrap(spacing: 8.w, runSpacing: 8.h, children: GstCalculator.gstSlabs.map((rate) {
@@ -368,93 +440,6 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ],
               SizedBox(height: 20.h),
 
-              _sec('⚖️ Wholesale / Retail Setup'),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider)),
-                child: Row(children: [
-                  Expanded(child: Text('Enable Bulk / Wholesale Sale', style: AppTheme.body)),
-                  Switch(
-                    value: _enableWholesale,
-                    onChanged: (v) => setState(() => _enableWholesale = v),
-                    activeColor: AppTheme.primary,
-                  ),
-                ]),
-              ),
-              if (_enableWholesale) ...[
-                SizedBox(height: 10.h),
-                Container(
-                  padding: EdgeInsets.all(14.w),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(12.r),
-                    border: Border.all(color: AppTheme.divider),
-                  ),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Configure bulk unit and retail breakdown', style: AppTheme.caption),
-                    SizedBox(height: 12.h),
-                    Row(children: [
-                      Expanded(child: TextFormField(controller: _wsUnitCtrl,
-                          decoration: const InputDecoration(labelText: 'Wholesale Unit', hintText: 'e.g. bag'),
-                          onChanged: (_) => setState(() {}))),
-                      SizedBox(width: 10.w),
-                      Expanded(child: TextFormField(controller: _retailUnitCtrl,
-                          decoration: const InputDecoration(labelText: 'Retail Unit', hintText: 'e.g. kg'),
-                          onChanged: (_) => setState(() {}))),
-                    ]),
-                    SizedBox(height: 10.h),
-                    TextFormField(
-                      controller: _wsToRetailQtyCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText: '1 ${_wsUnitCtrl.text.isEmpty ? 'wholesale unit' : _wsUnitCtrl.text} = ? ${_retailUnitCtrl.text.isEmpty ? 'retail units' : _retailUnitCtrl.text}',
-                        hintText: 'e.g. 22.0',
-                      ),
-                      validator: (v) {
-                        if (!_enableWholesale) return null;
-                        final val = double.tryParse(v ?? '');
-                        if (val == null || val <= 0) return 'Enter conversion ratio (e.g. 22)';
-                        return null;
-                      },
-                      onChanged: (_) => setState(() {}),
-                    ),
-                    // Live conversion preview
-                    Builder(builder: (ctx) {
-                      final qty = double.tryParse(_wsToRetailQtyCtrl.text) ?? 0;
-                      final wsUnit = _wsUnitCtrl.text.isEmpty ? 'bag' : _wsUnitCtrl.text;
-                      final rtUnit = _retailUnitCtrl.text.isEmpty ? 'kg' : _retailUnitCtrl.text;
-                      if (qty <= 0) return const SizedBox();
-                      return Padding(
-                        padding: EdgeInsets.only(top: 8.h),
-                        child: Container(
-                          padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primary.withOpacity(0.07),
-                            borderRadius: BorderRadius.circular(8.r),
-                          ),
-                          child: Row(children: [
-                            Icon(Icons.info_outline, size: 14.sp, color: AppTheme.primary),
-                            SizedBox(width: 6.w),
-                            Text('1 $wsUnit = $qty $rtUnit', style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w600)),
-                          ]),
-                        ),
-                      );
-                    }),
-                    SizedBox(height: 10.h),
-                    TextFormField(
-                      controller: _retailPriceCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText: 'Retail Price (per ${_retailUnitCtrl.text.isEmpty ? 'retail unit' : _retailUnitCtrl.text})',
-                        prefixText: '₹ ',
-                        hintText: 'e.g. 80.0',
-                      ),
-                    ),
-                  ]),
-                ),
-              ],
-              SizedBox(height: 20.h),
-
               _sec('⚙️ Optional'),
               TextFormField(controller: _barcodeCtrl, decoration: const InputDecoration(labelText: 'Barcode', prefixIcon: Icon(Icons.qr_code_scanner))),
               SizedBox(height: 10.h),
@@ -463,24 +448,6 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12.r), border: Border.all(color: AppTheme.divider)),
                 child: Row(children: [Expanded(child: Text('Active Product', style: AppTheme.body)), Switch(value: _isActive, onChanged: (v) => setState(() => _isActive = v), activeColor: AppTheme.primary)]),
               ),
-              SizedBox(height: 24.h),
-
-              // ── Sale Units (Loose Sale) ───────────────────────────────────
-              _sec('📏 Sale Units (Loose Sale)'),
-              Builder(builder: (ctx) {
-                final existingUoms = productState is ProductsLoaded
-                    ? productState.productUoms
-                    : const <ProductUom>[];
-                // Use -1 as placeholder productId for new products; saveAllUoms sets the real ID
-                final editorProductId = isEditing ? widget.product!.id! : -1;
-                return MultiUomEditor(
-                  key: ValueKey('uoms_${editorProductId}_${existingUoms.length}'),
-                  productId: editorProductId,
-                  availableUnits: units,
-                  initialUoms: existingUoms,
-                  onChanged: (uoms) => setState(() => _pendingUoms = uoms),
-                );
-              }),
               SizedBox(height: 80.h),
             ])),
           );

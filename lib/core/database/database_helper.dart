@@ -32,7 +32,7 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 12, // bumped from 11 → 12 for Phase 3: item_type + attributes on products
+      version: 13, // bumped from 12 → 13: unit_role on product_uoms for purchase/sale separation
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -109,7 +109,7 @@ class DatabaseHelper {
       uom_name TEXT NOT NULL, uom_short_name TEXT NOT NULL,
       conversion_qty REAL NOT NULL DEFAULT 1.0, selling_price REAL NOT NULL,
       wholesale_price REAL DEFAULT 0.0, purchase_price REAL DEFAULT 0.0,
-      is_default INTEGER DEFAULT 0,
+      is_default INTEGER DEFAULT 0, unit_role TEXT NOT NULL DEFAULT 'sale',
       FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE,
       FOREIGN KEY (uom_id)     REFERENCES uom_units (id))''');
 
@@ -511,6 +511,13 @@ class DatabaseHelper {
     if (oldVersion < 12) {
       try { await db.execute("ALTER TABLE products ADD COLUMN item_type TEXT DEFAULT 'physical'"); } catch (_) {}
       try { await db.execute("ALTER TABLE products ADD COLUMN attributes TEXT DEFAULT '{}'"); } catch (_) {}
+    }
+
+    // ── v13 — Base Inventory Unit: unit_role on product_uoms ──────────────
+    // 'sale' (default) = sold to customer; 'purchase' = bought from supplier.
+    // Existing rows keep DEFAULT 'sale' so billing is unaffected.
+    if (oldVersion < 13) {
+      try { await db.execute("ALTER TABLE product_uoms ADD COLUMN unit_role TEXT NOT NULL DEFAULT 'sale'"); } catch (_) {}
     }
 
     await _seed(db, now);
