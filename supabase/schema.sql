@@ -105,12 +105,15 @@ CREATE TABLE IF NOT EXISTS bills_sync (
   items_json            JSONB NOT NULL DEFAULT '[]',
   status                TEXT NOT NULL DEFAULT 'synced',
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  synced_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (license_id, local_bill_id)
+  synced_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_bills_sync_license    ON bills_sync (license_id);
 CREATE INDEX IF NOT EXISTS idx_bills_sync_created_at ON bills_sync (created_at);
+-- Idempotent: skipped if the constraint already exists (fresh DB creates it above;
+-- existing DB without the constraint has it added here; re-runs are safe).
+CREATE UNIQUE INDEX IF NOT EXISTS bills_sync_license_id_local_bill_id_key
+  ON bills_sync (license_id, local_bill_id);
 
 -- ─────────────────────────────────────────────────────────────
 -- 4. products_sync  (LEGACY — retained for migration period)
@@ -130,12 +133,13 @@ CREATE TABLE IF NOT EXISTS products_sync (
   gst_rate            NUMERIC(5, 2) NOT NULL DEFAULT 0,
   is_active           BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  synced_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (license_id, local_product_id)
+  synced_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_sync_license ON products_sync (license_id);
 CREATE INDEX IF NOT EXISTS idx_products_sync_name    ON products_sync (license_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS products_sync_license_id_local_product_id_key
+  ON products_sync (license_id, local_product_id);
 
 -- ─────────────────────────────────────────────────────────────
 -- 5. expenses_sync  (LEGACY — retained for migration period)
@@ -150,12 +154,13 @@ CREATE TABLE IF NOT EXISTS expenses_sync (
   expense_date      DATE NOT NULL,
   added_by          TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  synced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (license_id, local_expense_id)
+  synced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_expenses_sync_license ON expenses_sync (license_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_sync_date    ON expenses_sync (license_id, expense_date);
+CREATE UNIQUE INDEX IF NOT EXISTS expenses_sync_license_id_local_expense_id_key
+  ON expenses_sync (license_id, local_expense_id);
 
 -- ─────────────────────────────────────────────────────────────
 -- 6. purchases_sync  (LEGACY — retained for migration period)
@@ -171,12 +176,13 @@ CREATE TABLE IF NOT EXISTS purchases_sync (
   items_json          JSONB NOT NULL DEFAULT '[]',
   notes               TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  synced_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (license_id, local_purchase_id)
+  synced_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_purchases_sync_license ON purchases_sync (license_id);
 CREATE INDEX IF NOT EXISTS idx_purchases_sync_date    ON purchases_sync (license_id, purchase_date);
+CREATE UNIQUE INDEX IF NOT EXISTS purchases_sync_license_id_local_purchase_id_key
+  ON purchases_sync (license_id, local_purchase_id);
 
 -- ─────────────────────────────────────────────────────────────
 -- 7. subscriptions  (unchanged)
