@@ -11,15 +11,18 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../auth/presentation/pages/login_screen.dart';
 import '../../../auth/presentation/pages/set_pin_screen.dart';
 import '../../../backup/services/backup_service.dart';
+import '../../../day_close/day_close_page.dart';
 import '../../../masters/presentation/pages/masters_page.dart';
 import '../../../printer/presentation/pages/printer_settings_page.dart';
 import '../../../purchase/presentation/pages/add_purchase_page.dart';
+import '../../../purchase_return/purchase_return_page.dart';
 import '../../../sale_return/presentation/pages/sale_return_page.dart';
 import '../../../subscription/services/subscription_service.dart';
 import '../../../subscription/presentation/pages/subscription_lock_screen.dart';
 import '../../../users/domain/entities/app_user.dart';
 import '../../../users/domain/entities/users_page.dart';
 import 'language_settings_page.dart';
+import 'sync_status_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -109,8 +112,24 @@ class _SettingsPageState extends State<SettingsPage> {
             _div(),
             _tile(Icons.assignment_return, AppTheme.danger, 'Sale Return / Exchange', 'Return or exchange bills', null,
                     () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnPage()))),
+            _div(),
+            _tile(Icons.keyboard_return, AppTheme.warning, 'Purchase Return', 'Return items to supplier', null,
+                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseReturnPage()))),
+            _div(),
+            _tile(Icons.nightlight_round, AppTheme.primary, 'Day Close (EOD)', 'Close the day & reconcile cash', null,
+                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DayClosePage()))),
           ]),
           SizedBox(height: 16.h),
+
+          // Sync Monitor (admin only)
+          if (isAdmin) ...[
+            _head('🔄  Sync'),
+            _card([
+              _tile(Icons.cloud_sync, const Color(0xFF2196F3), 'Sync Monitor', 'View pending/failed sync items', null,
+                      () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncStatusPage()))),
+            ]),
+            SizedBox(height: 16.h),
+          ],
 
           // Language (NEW)
           _head('🌐  Language'),

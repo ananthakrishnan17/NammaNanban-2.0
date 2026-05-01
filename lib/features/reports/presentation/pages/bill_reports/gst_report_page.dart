@@ -23,10 +23,13 @@ class GstReportPage extends StatefulWidget {
   State<GstReportPage> createState() => _GstReportPageState();
 }
 
-class _GstReportPageState extends State<GstReportPage> {
+class _GstReportPageState extends State<GstReportPage>
+    with SingleTickerProviderStateMixin {
   late final ReportRepository _repo;
   late DateTime _from, _to;
+  late TabController _tabs;
   List<Map<String, dynamic>> _rows = [];
+  Map<String, dynamic>? _gstr1;
   bool _isLoading = false;
   String? _error;
   String _shopGstin = '';
@@ -34,6 +37,7 @@ class _GstReportPageState extends State<GstReportPage> {
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 2, vsync: this);
     _repo = ReportRepository(DatabaseHelper.instance);
     final now = DateTime.now();
     _from = DateTime(now.year, now.month, 1);
@@ -41,6 +45,9 @@ class _GstReportPageState extends State<GstReportPage> {
     _loadPrefs();
     _load();
   }
+
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -55,7 +62,8 @@ class _GstReportPageState extends State<GstReportPage> {
     setState(() { _isLoading = true; _error = null; });
     try {
       final data = await _repo.getGstReport(from: _from, to: _to);
-      setState(() => _rows = data);
+      final g1 = await _repo.getGstr1Report(from: _from, to: _to);
+      setState(() { _rows = data; _gstr1 = g1; });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -205,13 +213,20 @@ class _GstReportPageState extends State<GstReportPage> {
       appBar: AppBar(
         title: const Text('GST Report'),
         actions: [
-          if (bills.isNotEmpty)
+          if (_bills.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.file_download_outlined),
               tooltip: 'Export JSON',
               onPressed: _exportJson,
             ),
         ],
+        bottom: TabBar(
+          controller: _tabs,
+          labelColor: AppTheme.primary,
+          unselectedLabelColor: AppTheme.textSecondary,
+          indicatorColor: AppTheme.primary,
+          tabs: const [Tab(text: 'GST Summary'), Tab(text: 'GSTR-1')],
+        ),
       ),
       body: Column(children: [
         Container(
@@ -221,6 +236,23 @@ class _GstReportPageState extends State<GstReportPage> {
               from: _from, to: _to,
               onChanged: (f, t) { setState(() { _from = f; _to = t; }); _load(); }),
         ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabs,
+            children: [
+              // ── Tab 1: existing GST summary ─────────────────────────────
+              _buildGstTab(summary, bills),
+              // ── Tab 2: GSTR-1 structured ─────────────────────────────────
+              _buildGstr1Tab(),
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildGstTab(Map<String, double> summary, List<Map<String, dynamic>> bills) {
+    return Column(children: [
         if (bills.isNotEmpty)
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -317,7 +349,151 @@ class _GstReportPageState extends State<GstReportPage> {
                             );
                           }),
         ),
+    ]);
+  }
+
+  // ── GSTR-1 Tab ───────────────────────────────────────────────────────────────
+  Widget _buildGstr1Tab() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_gstr1 == null) return Center(child: Text('No data', style: AppTheme.caption));
+
+    final b2b = (_gstr1!['b2b'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final b2c = _gstr1!['b2c'] as Map<String, dynamic>? ?? {};
+    final hsn = (_gstr1!['hsn_summary'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(16.w),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header
+        Container(
+          padding: EdgeInsets.all(12.w),
+          decoration: BoxDecoration(
+            color: AppTheme.primary.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(10.r),
+          ),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('GSTIN: ${_shopGstin.isEmpty ? 'Not set' : _shopGstin}',
+                  style: AppTheme.body.copyWith(fontWeight: FontWeight.w700)),
+              Text('Period: ${_gstr1!['period_from']} to ${_gstr1!['period_to']}',
+                  style: AppTheme.caption),
+            ])),
+            IconButton(
+              icon: const Icon(Icons.file_download_outlined),
+              onPressed: _exportGstr1Json,
+              tooltip: 'Export GSTR-1',
+            ),
+          ]),
+        ),
+        SizedBox(height: 16.h),
+
+        // B2C Summary
+        Text('B2C Sales', style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+        SizedBox(height: 8.h),
+        Container(
+          padding: EdgeInsets.all(12.w),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10.r),
+              border: Border.all(color: AppTheme.divider)),
+          child: Row(children: [
+            Expanded(child: _b2cStat('Invoices', '${b2c['invoice_count'] ?? 0}')),
+            Expanded(child: _b2cStat('Taxable', CurrencyFormatter.format((b2c['taxable_value'] as num?)?.toDouble() ?? 0))),
+            Expanded(child: _b2cStat('CGST', CurrencyFormatter.format((b2c['cgst'] as num?)?.toDouble() ?? 0))),
+            Expanded(child: _b2cStat('SGST', CurrencyFormatter.format((b2c['sgst'] as num?)?.toDouble() ?? 0))),
+          ]),
+        ),
+        SizedBox(height: 16.h),
+
+        // B2B invoices
+        Text('B2B Invoices (${b2b.length})', style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+        SizedBox(height: 8.h),
+        if (b2b.isEmpty)
+          Text('No B2B invoices', style: AppTheme.caption)
+        else
+          ...b2b.map((inv) => Container(
+            margin: EdgeInsets.only(bottom: 8.h),
+            padding: EdgeInsets.all(10.w),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10.r),
+                border: Border.all(color: AppTheme.divider)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${inv['bill_number']}  •  ${inv['customer_name']}', style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+              Text('GSTIN: ${inv['customer_gstin'] ?? '-'}', style: AppTheme.caption),
+              SizedBox(height: 4.h),
+              Row(children: [
+                Expanded(child: _b2cStat('Taxable', CurrencyFormatter.format((inv['taxable_value'] as num?)?.toDouble() ?? 0))),
+                Expanded(child: _b2cStat('CGST', CurrencyFormatter.format((inv['cgst_total'] as num?)?.toDouble() ?? 0))),
+                Expanded(child: _b2cStat('SGST', CurrencyFormatter.format((inv['sgst_total'] as num?)?.toDouble() ?? 0))),
+                Expanded(child: _b2cStat('Total', CurrencyFormatter.format((inv['total_amount'] as num?)?.toDouble() ?? 0))),
+              ]),
+            ]),
+          )),
+        SizedBox(height: 16.h),
+
+        // HSN Summary
+        Text('HSN-wise Summary', style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+        SizedBox(height: 8.h),
+        if (hsn.isEmpty)
+          Text('No HSN data', style: AppTheme.caption)
+        else ...[
+          Container(
+            color: AppTheme.primary,
+            padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+            child: Row(children: [
+              Expanded(flex: 3, child: Text('HSN', style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600))),
+              Expanded(flex: 2, child: Text('Qty', textAlign: TextAlign.right, style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600))),
+              Expanded(flex: 2, child: Text('Taxable', textAlign: TextAlign.right, style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600))),
+              Expanded(flex: 2, child: Text('GST', textAlign: TextAlign.right, style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600))),
+            ]),
+          ),
+          ...hsn.asMap().entries.map((e) {
+            final h = e.value;
+            final i = e.key;
+            return Container(
+              color: i.isEven ? Colors.white : AppTheme.surface,
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+              child: Row(children: [
+                Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(h['hsn_code'] as String? ?? 'N/A', style: AppTheme.body.copyWith(fontSize: 11.sp)),
+                  Text('${h['gst_rate']}% GST', style: AppTheme.caption.copyWith(fontSize: 10.sp)),
+                ])),
+                Expanded(flex: 2, child: Text('${(h['total_qty'] as num?)?.toStringAsFixed(2) ?? '0'}',
+                    textAlign: TextAlign.right, style: AppTheme.caption)),
+                Expanded(flex: 2, child: Text(CurrencyFormatter.format((h['taxable_value'] as num?)?.toDouble() ?? 0),
+                    textAlign: TextAlign.right, style: AppTheme.caption)),
+                Expanded(flex: 2, child: Text(CurrencyFormatter.format((h['total_gst'] as num?)?.toDouble() ?? 0),
+                    textAlign: TextAlign.right, style: AppTheme.caption)),
+              ]),
+            );
+          }),
+        ],
+        SizedBox(height: 40.h),
       ]),
     );
+  }
+
+  Widget _b2cStat(String label, String value) => Column(children: [
+    Text(value, style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w700, fontFamily: 'Poppins', color: AppTheme.textPrimary)),
+    Text(label, style: AppTheme.caption.copyWith(fontSize: 10.sp)),
+  ]);
+
+  Future<void> _exportGstr1Json() async {
+    try {
+      if (_gstr1 == null) return;
+      final jsonStr = const JsonEncoder.withIndent('  ').convert({
+        'gstin': _shopGstin,
+        ..._gstr1!,
+      });
+      final dir = await getTemporaryDirectory();
+      final period = DateFormat('MM-yyyy').format(_from);
+      final file = File('${dir.path}/gstr1_$period.json');
+      await file.writeAsString(jsonStr);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/json')],
+        subject: 'GSTR-1 $period',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e'), backgroundColor: AppTheme.danger));
+    }
   }
 }

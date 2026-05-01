@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 
 // ─── Entities ─────────────────────────────────────────────────────────────────
 class PurchaseItem extends Equatable {
@@ -113,7 +114,7 @@ class PurchaseRepository {
     double total = items.fold(0.0, (s, i) => s + i.totalCost);
     double gstTotal = items.fold(0.0, (s, i) => s + i.gstAmount);
 
-    return await db.transaction((txn) async {
+    final purchase = await db.transaction((txn) async {
       final purchaseId = await txn.insert('purchases', {
         'purchase_number': _genNumber(), 'supplier_id': supplierId,
         'supplier_name': supplierName, 'total_amount': total, 'gst_total': gstTotal,
@@ -156,6 +157,25 @@ class PurchaseRepository {
           totalAmount: total, gstTotal: gstTotal, paymentMode: paymentMode,
           notes: notes, purchaseDate: date, createdAt: now);
     });
+
+    // Write double-entry ledger (best-effort)
+    try {
+      final licenseId = await LedgerService.resolveLicenseId(_db);
+      await db.transaction((txn) async {
+        await LedgerService.instance.recordPurchase(
+          txn: txn,
+          totalAmount: total,
+          licenseId: licenseId,
+          tags: {
+            'supplier_name': supplierName,
+            'payment_mode': paymentMode,
+            'notes': notes,
+          },
+        );
+      });
+    } catch (_) {}
+
+    return purchase;
   }
 
   Future<List<Purchase>> getRecentPurchases({int limit = 50}) async {

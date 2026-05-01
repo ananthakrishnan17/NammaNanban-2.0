@@ -2,6 +2,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 
 class Expense extends Equatable {
   final int? id;
@@ -95,7 +96,26 @@ class ExpenseRepositoryImpl implements ExpenseRepository {
   @override
   Future<int> addExpense(Expense expense) async {
     final db = await _dbHelper.database;
-    return await db.insert('expenses', expense.toMap());
+    final id = await db.insert('expenses', expense.toMap());
+
+    // Write double-entry ledger (best-effort)
+    try {
+      final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
+      await db.transaction((txn) async {
+        await LedgerService.instance.recordExpense(
+          txn: txn,
+          amount: expense.amount,
+          licenseId: licenseId,
+          tags: {
+            'category': expense.category,
+            'description': expense.description,
+            'date': expense.date.toIso8601String(),
+          },
+        );
+      });
+    } catch (_) {}
+
+    return id;
   }
 
   @override

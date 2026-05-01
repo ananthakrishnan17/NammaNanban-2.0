@@ -3,12 +3,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 
+import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
 import '../../../products/domain/entities/bom_ingredient.dart';
 import '../../../products/domain/entities/product.dart';
+import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../domain/entities/purchase.dart';
 
@@ -301,6 +303,28 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
   final _costCtrl = TextEditingController();
   double _gstRate = 0;
   String _searchQ = '';
+  List<Map<String, dynamic>> _purchaseUoms = [];
+  Map<String, dynamic>? _selectedUom;
+
+  Future<void> _loadPurchaseUoms(int productId) async {
+    final repo = ProductRepositoryImpl(DatabaseHelper.instance);
+    final all = await repo.getProductUoms(productId);
+    // Filter purchase UOMs only (unit_role = 'purchase')
+    final purchaseOnly = all.where((u) => (u.uomName.isNotEmpty)).toList();
+    final db = await DatabaseHelper.instance.database;
+    final rows = await db.rawQuery(
+        "SELECT * FROM product_uoms WHERE product_id = ? AND unit_role = 'purchase'",
+        [productId]);
+    setState(() {
+      _purchaseUoms = rows;
+      _selectedUom = rows.isNotEmpty ? rows.first : null;
+      if (_selectedUom != null) {
+        _costCtrl.text = (_selectedUom!['purchase_price'] as num?)
+                ?.toStringAsFixed(2) ??
+            _selected!.purchasePrice.toStringAsFixed(2);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -327,11 +351,16 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
           itemBuilder: (_, i) => ListTile(
             title: Text(filtered[i].name, style: AppTheme.body),
             subtitle: Text('Buy: ₹${filtered[i].purchasePrice} | Stock: ${filtered[i].stockQuantity} ${filtered[i].unit}', style: AppTheme.caption),
-            onTap: () => setState(() {
-              _selected = filtered[i];
-              _costCtrl.text = filtered[i].purchasePrice.toStringAsFixed(2);
-              _gstRate = filtered[i].gstRate;
-            }),
+            onTap: () {
+              setState(() {
+                _selected = filtered[i];
+                _costCtrl.text = filtered[i].purchasePrice.toStringAsFixed(2);
+                _gstRate = filtered[i].gstRate;
+                _purchaseUoms = [];
+                _selectedUom = null;
+              });
+              _loadPurchaseUoms(filtered[i].id!);
+            },
           ),
         )
             : Padding(
@@ -353,6 +382,31 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                   '1 ${_selected!.wholesaleUnit} = ${_selected!.wholesaleToRetailQty.toStringAsFixed(1)} ${_selected!.retailUnit}',
                   style: AppTheme.caption.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w600),
                 ),
+              ),
+            ],
+            // Purchase UOM picker
+            if (_purchaseUoms.isNotEmpty) ...[
+              SizedBox(height: 10.h),
+              DropdownButtonFormField<Map<String, dynamic>>(
+                value: _selectedUom,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Purchase UOM',
+                  prefixIcon: Icon(Icons.straighten),
+                ),
+                items: _purchaseUoms.map((u) => DropdownMenuItem(
+                  value: u,
+                  child: Text(
+                    '${u['uom_name']} (${u['conversion_qty']}x base) — ₹${(u['purchase_price'] as num?)?.toStringAsFixed(2) ?? '-'}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                )).toList(),
+                onChanged: (v) => setState(() {
+                  _selectedUom = v;
+                  if (v != null) {
+                    _costCtrl.text = ((v['purchase_price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+                  }
+                }),
               ),
             ],
             SizedBox(height: 12.h),
@@ -380,12 +434,12 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
               onPressed: () {
                 final qty = double.tryParse(_qtyCtrl.text) ?? 1;
                 final cost = double.tryParse(_costCtrl.text) ?? _selected!.purchasePrice;
-                final unit = _selected!.wholesaleToRetailQty > 1.0
-                    ? _selected!.wholesaleUnit
-                    : _selected!.unit;
+                final uomUnit = _selectedUom != null
+                    ? _selectedUom!['uom_name'] as String
+                    : (_selected!.wholesaleToRetailQty > 1.0 ? _selected!.wholesaleUnit : _selected!.unit);
                 widget.onItemAdded(PurchaseCartItem(
                     productId: _selected!.id!, productName: _selected!.name,
-                    unit: unit, quantity: qty, unitCost: cost, gstRate: _gstRate));
+                    unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate));
               },
               child: const Text('Add to Purchase'),
             ),

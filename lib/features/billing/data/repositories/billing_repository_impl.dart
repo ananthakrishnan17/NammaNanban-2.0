@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/sync/sync_service.dart';
 import '../../../../core/sync/sync_status.dart';
@@ -134,6 +137,30 @@ class BillingRepositoryImpl implements BillingRepository {
             'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
             [baseQtyToDeduct, now.toIso8601String(), cartItem.productId]);
 
+        // BOM deduction: if composite_recipe, deduct each ingredient's stock
+        try {
+          final productRows = await txn.query('products',
+              columns: ['item_type', 'attributes'],
+              where: 'id = ?', whereArgs: [cartItem.productId]);
+          if (productRows.isNotEmpty &&
+              productRows.first['item_type'] == 'composite_recipe') {
+            final attrStr = productRows.first['attributes'] as String? ?? '{}';
+            final attrs = jsonDecode(attrStr) as Map<String, dynamic>? ?? {};
+            final bom = (attrs['bom'] as List<dynamic>?) ?? [];
+            for (final ing in bom) {
+              final ingMap = ing as Map<String, dynamic>;
+              final ingId = ingMap['product_id'] as int?;
+              final ingQty = (ingMap['quantity'] as num?)?.toDouble() ?? 0;
+              if (ingId != null && ingQty > 0) {
+                final totalIngQty = ingQty * baseQtyToDeduct;
+                await txn.rawUpdate(
+                    'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
+                    [totalIngQty, now.toIso8601String(), ingId]);
+              }
+            }
+          }
+        } catch (_) {}
+
         billItems.add(BillItem(id: itemId, billId: billId, productId: cartItem.productId,
             productName: cartItem.productName, quantity: cartItem.quantity, unit: cartItem.unit,
             unitPrice: effectivePrice, purchasePrice: cartItem.purchasePrice,
@@ -150,6 +177,26 @@ class BillingRepositoryImpl implements BillingRepository {
           customerName: customerName, customerAddress: customerAddress,
           customerGstin: customerGstin, createdAt: now);
     });
+
+    // Write double-entry ledger (best-effort; never fails the sale)
+    try {
+      final db2 = await _dbHelper.database;
+      final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
+      await db2.transaction((txn) async {
+        await LedgerService.instance.recordSale(
+          txn: txn,
+          totalAmount: bill.totalAmount,
+          totalCost: items.fold(0.0, (s, i) => s + i.purchasePrice * i.quantity * i.conversionQty),
+          licenseId: licenseId,
+          tags: {
+            'bill_number': bill.billNumber,
+            'bill_type': bill.billType,
+            'payment_mode': bill.paymentMode,
+            'customer_name': bill.customerName,
+          },
+        );
+      });
+    } catch (_) {}
 
     // Enqueue bill for cloud sync (no-op for offline licenses)
     await SyncService.instance.enqueue(
