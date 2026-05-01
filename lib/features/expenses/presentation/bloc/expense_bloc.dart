@@ -4,7 +4,6 @@ import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
 
-
   final int? id;
   final String category;
   final String? description;
@@ -96,38 +95,26 @@ class ExpenseRepositoryImpl implements ExpenseRepository {
   @override
   Future<int> addExpense(Expense expense) async {
     final db = await _dbHelper.database;
-    final expenseId = await db.insert('expenses', expense.toMap());
+    final id = await db.insert('expenses', expense.toMap());
 
-    // ── Double-entry ledger ──────────────────────────────────────────────
-    // Expense journal:
-    //   DR Expense   amount
-    //   CR Asset     amount (cash/bank paid out)
+    // Write double-entry ledger (best-effort)
     try {
-      final ledger = LedgerService.instance;
-      final licenseId = await ledger.getLicenseId();
-      final nowStr = expense.createdAt.toIso8601String();
-      await ledger.recordTransaction(
-        executor: db,
-        type: 'expense',
-        totalAmount: expense.amount,
-        tags: {
-          'expense_id': expenseId,
-          'category': expense.category,
-          'description': expense.description,
-          'is_raw_material': expense.isRawMaterial,
-        },
-        licenseId: licenseId,
-        createdAt: nowStr,
-        entries: [
-          LedgerEntryInput(accountType: 'expense', direction: 'debit', amount: expense.amount),
-          LedgerEntryInput(accountType: 'asset', direction: 'credit', amount: expense.amount),
-        ],
-      );
-    } catch (_) {
-      rethrow;
-    }
+      final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
+      await db.transaction((txn) async {
+        await LedgerService.instance.recordExpense(
+          txn: txn,
+          amount: expense.amount,
+          licenseId: licenseId,
+          tags: {
+            'category': expense.category,
+            'description': expense.description,
+            'date': expense.date.toIso8601String(),
+          },
+        );
+      });
+    } catch (_) {}
 
-    return expenseId;
+    return id;
   }
 
   @override

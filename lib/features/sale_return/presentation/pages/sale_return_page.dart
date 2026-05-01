@@ -111,7 +111,7 @@ class SaleReturnRepository {
     final returnNumber = await _generateReturnNumber();
     final total = items.fold(0.0, (s, i) => s + i.totalPrice);
 
-    final saleReturn = await db.transaction((txn) async {
+    final result = await db.transaction((txn) async {
       final retId = await txn.insert('sale_returns', {
         'return_number': returnNumber,
         'original_bill_id': originalBillId,
@@ -141,8 +141,6 @@ class SaleReturnRepository {
         });
 
         // FIX: billing-ல போன அதே அளவு stock திரும்ப போடுகிறோம்
-        // பழைய code: stock_quantity + item.quantity (WRONG — conversion ignore பண்றது)
-        // புது code:  stock_quantity + item.baseQtyToRestore (CORRECT)
         await txn.rawUpdate(
           'UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
           [item.baseQtyToRestore, now.toIso8601String(), item.productId],
@@ -164,66 +162,28 @@ class SaleReturnRepository {
       );
     });
 
-    // ── Double-entry ledger (outside the save transaction but same DB) ───
-    // Sale Return journal:
-    //   DR Income       total   (reverse the revenue)
-    //   CR Asset        total   (refund cash/bank to customer)
-    //   DR Inventory    cogs    (restore stock, qty positive)
-    //   CR COGS         cogs    (reverse cost entry)
+    // Write double-entry ledger for sale return (best-effort)
     try {
-      final ledger = LedgerService.instance;
-      final licenseId = await ledger.getLicenseId();
-      final nowStr = now.toIso8601String();
+      final licenseId = await LedgerService.resolveLicenseId(_db);
+      await db.transaction((txn) async {
+        await LedgerService.instance.recordSaleReturn(
+          txn: txn,
+          returnAmount: total,
+          returnCost: 0, // purchase price not stored on return items; no COGS reversal
+          licenseId: licenseId,
+          tags: {
+            'return_number': returnNumber,
+            'original_bill_number': originalBillNumber,
+            'customer_name': customerName,
+            'refund_mode': refundMode,
+            'reason': reason,
+          },
+        );
+      });
+    } catch (_) {}
 
-      final ledgerEntries = <LedgerEntryInput>[];
-      for (final item in items) {
-        // Approximate COGS: look up current purchase price from products table
-        final productRows = await db.query('products',
-            columns: ['purchase_price'],
-            where: 'id = ?', whereArgs: [item.productId]);
-        final purchasePrice = productRows.isNotEmpty
-            ? (productRows.first['purchase_price'] as num?)?.toDouble() ?? 0.0
-            : 0.0;
-        final cogs = purchasePrice * item.baseQtyToRestore;
-        if (cogs > 0) {
-          ledgerEntries.add(LedgerEntryInput(
-            accountType: 'inventory', direction: 'debit',
-            amount: cogs, quantityChange: item.baseQtyToRestore,
-          ));
-          ledgerEntries.add(LedgerEntryInput(
-            accountType: 'cogs', direction: 'credit',
-            amount: cogs, quantityChange: item.baseQtyToRestore,
-          ));
-        }
-      }
-      // DR Income = total (reverse revenue), CR Asset = total (cash refund)
-      ledgerEntries.addAll([
-        LedgerEntryInput(accountType: 'income', direction: 'debit', amount: total),
-        LedgerEntryInput(accountType: 'asset', direction: 'credit', amount: total),
-      ]);
-
-      await ledger.recordTransaction(
-        executor: db,
-        type: 'sale_return',
-        totalAmount: total,
-        tags: {
-          'return_number': returnNumber,
-          'original_bill_number': originalBillNumber,
-          'customer_name': customerName,
-          'refund_mode': refundMode,
-          'reason': reason,
-        },
-        licenseId: licenseId,
-        createdAt: nowStr,
-        entries: ledgerEntries,
-      );
-    } catch (e, st) {
-      // Don't block the return — stock and DB are already updated above.
-      // Log for audit purposes.
-      debugPrint('[LedgerService] sale_return ledger write failed: $e\n$st');
-    }
-
-    return saleReturn;
+    return result;
+  }
 
   // Original bill-ல இருந்து item details (conversion info உட்பட) fetch பண்ணு
   // "Fetch from Bill" button-க்கு இதை use பண்ணலாம்

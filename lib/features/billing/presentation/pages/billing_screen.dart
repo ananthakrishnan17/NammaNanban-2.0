@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -58,6 +59,50 @@ class _BillingScreenState extends State<BillingScreen> {
       retailPrice: p.retailPrice,
       wholesaleToRetailQty: p.wholesaleToRetailQty,
     );
+  }
+
+  // ── Barcode Scanner ────────────────────────────────────────────────────────
+  Future<void> _scanBarcode(BuildContext context) async {
+    final barcode = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _BarcodeScannerSheet(),
+    );
+    if (barcode == null || barcode.isEmpty || !mounted) return;
+
+    final repo = ProductRepositoryImpl(DatabaseHelper.instance);
+    final product = await repo.findByBarcode(barcode);
+    if (!mounted) return;
+
+    if (product == null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('No product found for barcode: $barcode'),
+        backgroundColor: AppTheme.danger,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+      ));
+      return;
+    }
+    if (product.isOutOfStock) { _showOutOfStockSnack(product.name); return; }
+
+    final uoms = await repo.getProductUoms(product.id!);
+    if (!mounted) return;
+    if (uoms.isEmpty) {
+      await _addProductToCart(context, product);
+    } else {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
+        builder: (_) => BlocProvider.value(
+          value: context.read<BillingBloc>(),
+          child: UomPickerSheet(product: product, uoms: uoms),
+        ),
+      );
+    }
   }
 
   /// Show sale type selection dialog for products with wholesaleToRetailQty > 1
@@ -263,7 +308,22 @@ class _BillingScreenState extends State<BillingScreen> {
                   ),
                 ),
               ),
-              SizedBox(width: 10.w),
+              SizedBox(width: 8.w),
+              // ── Barcode Scan ──────────────────────────────────────────────
+              GestureDetector(
+                onTap: () => _scanBarcode(context),
+                child: Container(
+                  width: 44.w,
+                  height: 44.h,
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(12.r),
+                    border: Border.all(color: AppTheme.divider),
+                  ),
+                  child: Icon(Icons.qr_code_scanner,
+                      color: AppTheme.textSecondary, size: 22.sp),
+                ),
+              ),
               // ── Held Bills Badge ────────────────────────────────────────────
               BlocBuilder<HeldBillBloc, HeldBillState>(
                 builder: (context, heldState) {
@@ -1185,4 +1245,75 @@ class _BillingScreenState extends State<BillingScreen> {
       }
     });
   }
+}
+
+// ── Barcode Scanner Bottom Sheet ──────────────────────────────────────────────
+class _BarcodeScannerSheet extends StatefulWidget {
+  const _BarcodeScannerSheet();
+
+  @override
+  State<_BarcodeScannerSheet> createState() => _BarcodeScannerSheetState();
+}
+
+class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
+  late final MobileScannerController _controller;
+  bool _hasScanned = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 320.h,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+      ),
+      child: Column(children: [
+        Padding(
+          padding: EdgeInsets.all(12.w),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Scan Barcode',
+                  style: TextStyle(color: Colors.white, fontSize: 16.sp,
+                      fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: MobileScanner(
+            controller: _controller,
+            onDetect: (capture) {
+              if (_hasScanned) return;
+              final barcode = capture.barcodes.firstOrNull?.rawValue;
+              if (barcode != null && barcode.isNotEmpty) {
+                _hasScanned = true;
+                Navigator.pop(context, barcode);
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text('Point camera at a barcode',
+            style: TextStyle(color: Colors.white60, fontSize: 13)),
+        const SizedBox(height: 12),
+      ]),
+    );
+  }
+}
 }

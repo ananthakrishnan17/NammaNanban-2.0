@@ -50,6 +50,22 @@ class ProductRepositoryImpl implements ProductRepository {
     return rows.map((m) => ProductModel.fromMap(m)).toList();
   }
 
+  /// Exact barcode lookup — returns the matching product or null.
+  Future<Product?> findByBarcode(String barcode) async {
+    if (barcode.isEmpty) return null;
+    final db = await _dbHelper.database;
+    final rows = await db.rawQuery('''
+      SELECT p.*, c.name as category_name, b.name as brand_name, u.short_name as uom_short_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN brands b ON p.brand_id = b.id
+      LEFT JOIN uom_units u ON p.uom_id = u.id
+      WHERE p.is_active = 1 AND p.barcode = ?
+      LIMIT 1''', [barcode]);
+    if (rows.isEmpty) return null;
+    return ProductModel.fromMap(rows.first);
+  }
+
   @override Future<List<Product>> getLowStockProducts() async {
     final db = await _dbHelper.database;
     final rows = await db.rawQuery('''

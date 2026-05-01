@@ -143,23 +143,31 @@ class _CustomerStatementPage extends StatefulWidget {
   State<_CustomerStatementPage> createState() => _CustomerStatementPageState();
 }
 
-class _CustomerStatementPageState extends State<_CustomerStatementPage> {
+class _CustomerStatementPageState extends State<_CustomerStatementPage>
+    with SingleTickerProviderStateMixin {
   late final ReportRepository _repo;
+  late TabController _tabs;
   Map<String, dynamic>? _statement;
+  Map<String, dynamic>? _ledger;
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 2, vsync: this);
     _repo = ReportRepository(DatabaseHelper.instance);
     _load();
   }
 
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+
   Future<void> _load() async {
     setState(() => _isLoading = true);
     try {
-      final data = await _repo.getCustomerStatement(widget.customerId);
-      setState(() => _statement = data);
+      final st = await _repo.getCustomerStatement(widget.customerId);
+      final ldr = await _repo.getCustomerLedger(widget.customerId);
+      setState(() { _statement = st; _ledger = ldr; });
     } catch (_) {}
     setState(() => _isLoading = false);
   }
@@ -169,58 +177,144 @@ class _CustomerStatementPageState extends State<_CustomerStatementPage> {
     final bills = (_statement?['bills'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final total = bills.fold(0.0, (s, b) => s + (b['total_amount'] as num).toDouble());
     final outstanding = (_statement?['customer']?['outstanding_balance'] as num?)?.toDouble() ?? 0;
+    final entries = (_ledger?['entries'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final closing = (_ledger?['closing_balance'] as num?)?.toDouble() ?? 0;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.customerName)),
-      body: Column(children: [
-        Container(
-          color: Colors.white,
-          padding: EdgeInsets.all(16.w),
-          child: Row(children: [
-            Expanded(child: _sCard('Total Billed', CurrencyFormatter.format(total), AppTheme.primary)),
-            SizedBox(width: 10.w),
-            Expanded(child: _sCard('Outstanding', CurrencyFormatter.format(outstanding),
-                outstanding > 0 ? AppTheme.danger : AppTheme.accent)),
-          ]),
+      appBar: AppBar(
+        title: Text(widget.customerName),
+        bottom: TabBar(
+          controller: _tabs,
+          labelColor: AppTheme.primary,
+          unselectedLabelColor: AppTheme.textSecondary,
+          indicatorColor: AppTheme.primary,
+          tabs: const [Tab(text: 'Invoices'), Tab(text: 'Dr/Cr Ledger')],
         ),
-        Expanded(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : bills.isEmpty
-                  ? Center(child: Text('No bills found', style: AppTheme.caption))
-                  : ListView.separated(
-                      padding: EdgeInsets.all(16.w),
-                      itemCount: bills.length,
-                      separatorBuilder: (_, __) => SizedBox(height: 8.h),
-                      itemBuilder: (_, i) {
-                        final b = bills[i];
-                        final date = DateTime.parse(b['created_at'] as String);
-                        return Container(
-                          padding: EdgeInsets.all(12.w),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(10.r),
-                            border: Border.all(color: AppTheme.divider),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(children: [
+              Container(
+                color: Colors.white,
+                padding: EdgeInsets.all(16.w),
+                child: Row(children: [
+                  Expanded(child: _sCard('Total Billed', CurrencyFormatter.format(total), AppTheme.primary)),
+                  SizedBox(width: 10.w),
+                  Expanded(child: _sCard('Outstanding', CurrencyFormatter.format(outstanding),
+                      outstanding > 0 ? AppTheme.danger : AppTheme.accent)),
+                ]),
+              ),
+              Expanded(child: TabBarView(
+                controller: _tabs,
+                children: [
+                  // ── Bills tab ─────────────────────────────────────────────
+                  bills.isEmpty
+                      ? Center(child: Text('No bills found', style: AppTheme.caption))
+                      : ListView.separated(
+                          padding: EdgeInsets.all(16.w),
+                          itemCount: bills.length,
+                          separatorBuilder: (_, __) => SizedBox(height: 8.h),
+                          itemBuilder: (_, i) {
+                            final b = bills[i];
+                            final date = DateTime.parse(b['created_at'] as String);
+                            return Container(
+                              padding: EdgeInsets.all(12.w),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10.r),
+                                border: Border.all(color: AppTheme.divider),
+                              ),
+                              child: Row(children: [
+                                Expanded(child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Bill #${b['bill_number']}',
+                                        style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+                                    Text('${b['payment_mode'] ?? ''}  •  ${DateFormat('dd MMM yyyy').format(date)}',
+                                        style: AppTheme.caption),
+                                  ],
+                                )),
+                                Text(CurrencyFormatter.format((b['total_amount'] as num).toDouble()),
+                                    style: AppTheme.body.copyWith(fontWeight: FontWeight.w700, color: AppTheme.primary)),
+                              ]),
+                            );
+                          }),
+
+                  // ── Dr/Cr Ledger tab ──────────────────────────────────────
+                  entries.isEmpty
+                      ? Center(child: Text('No ledger entries.', style: AppTheme.caption))
+                      : Column(children: [
+                          Container(
+                            color: AppTheme.primary,
+                            padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                            child: Row(children: [
+                              Expanded(flex: 4, child: Text('Date / Description',
+                                  style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600))),
+                              _hdr('Debit'),
+                              _hdr('Credit'),
+                              _hdr('Balance'),
+                            ]),
                           ),
-                          child: Row(children: [
-                            Expanded(child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('Bill #${b['bill_number']}',
-                                    style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
-                                Text('${b['payment_mode'] ?? ''}  •  ${DateFormat('dd MMM yyyy').format(date)}',
-                                    style: AppTheme.caption),
-                              ],
-                            )),
-                            Text(CurrencyFormatter.format((b['total_amount'] as num).toDouble()),
-                                style: AppTheme.body.copyWith(fontWeight: FontWeight.w700, color: AppTheme.primary)),
-                          ]),
-                        );
-                      }),
-        ),
-      ]),
+                          Expanded(child: ListView.separated(
+                            itemCount: entries.length,
+                            separatorBuilder: (_, __) => Divider(height: 1, color: AppTheme.divider),
+                            itemBuilder: (_, i) {
+                              final e = entries[i];
+                              final dr = (e['debit'] as num?)?.toDouble() ?? 0;
+                              final cr = (e['credit'] as num?)?.toDouble() ?? 0;
+                              final bal = (e['balance'] as num?)?.toDouble() ?? 0;
+                              return Container(
+                                color: i.isEven ? Colors.white : AppTheme.surface,
+                                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                                child: Row(children: [
+                                  Expanded(flex: 4, child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(e['description'] as String? ?? '',
+                                          style: AppTheme.body.copyWith(fontSize: 11.sp)),
+                                      Text(_fmtDate(e['date'] as String),
+                                          style: AppTheme.caption.copyWith(fontSize: 10.sp)),
+                                    ],
+                                  )),
+                                  _cell(dr > 0 ? CurrencyFormatter.format(dr) : '-', AppTheme.danger),
+                                  _cell(cr > 0 ? CurrencyFormatter.format(cr) : '-', AppTheme.accent),
+                                  _cell(CurrencyFormatter.format(bal),
+                                      bal > 0 ? AppTheme.danger : AppTheme.accent, bold: true),
+                                ]),
+                              );
+                            },
+                          )),
+                          Container(
+                            color: AppTheme.surface,
+                            padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                            child: Row(children: [
+                              Expanded(child: Text('Closing Balance',
+                                  style: AppTheme.body.copyWith(fontWeight: FontWeight.w700))),
+                              Text(
+                                CurrencyFormatter.format(closing),
+                                style: TextStyle(
+                                  fontSize: 15.sp, fontWeight: FontWeight.w700,
+                                  color: closing > 0 ? AppTheme.danger : AppTheme.accent,
+                                  fontFamily: 'Poppins',
+                                ),
+                              ),
+                            ]),
+                          ),
+                        ]),
+                ],
+              )),
+            ]),
     );
   }
+
+  Widget _hdr(String t) => Expanded(flex: 2,
+      child: Text(t, textAlign: TextAlign.right,
+          style: TextStyle(color: Colors.white, fontSize: 11.sp, fontWeight: FontWeight.w600)));
+
+  Widget _cell(String t, Color color, {bool bold = false}) => Expanded(flex: 2,
+      child: Text(t, textAlign: TextAlign.right,
+          style: TextStyle(fontSize: 11.sp, color: color,
+              fontWeight: bold ? FontWeight.w700 : FontWeight.w400, fontFamily: 'Poppins')));
 
   Widget _sCard(String label, String value, Color color) => Container(
     padding: EdgeInsets.all(10.w),
@@ -231,4 +325,9 @@ class _CustomerStatementPageState extends State<_CustomerStatementPage> {
           maxLines: 1, overflow: TextOverflow.ellipsis),
     ]),
   );
+
+  String _fmtDate(String iso) {
+    try { return DateFormat('dd MMM yyyy').format(DateTime.parse(iso)); }
+    catch (_) { return iso; }
+  }
 }

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
+
 import '../../../../core/database/database_helper.dart';
 import '../../../billing/domain/entities/bill.dart';
 
@@ -868,5 +870,339 @@ class ReportRepository {
       'profit_margin': netSales > 0 ? (netProfit / netSales) * 100 : 0.0,
       'source': 'ledger',
     };
+  }
+
+  // ── Ledger Balances (account-wise totals) ────────────────────────────────────
+  /// Returns current balance for each account_type, aggregated from
+  /// [ledger_entries]. Debit entries are positive, credit entries negative
+  /// for asset/expense/cogs/inventory/waste accounts. For income/liability
+  /// the balance is the net credit amount.
+  Future<Map<String, double>> getLedgerBalances({
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final db = await _db.database;
+    final f = from ?? DateTime(2000);
+    final t = to ?? DateTime.now();
+    try {
+      final rows = await db.rawQuery('''
+        SELECT account_type,
+               direction,
+               COALESCE(SUM(amount), 0) as total
+        FROM ledger_entries
+        WHERE created_at BETWEEN ? AND ?
+        GROUP BY account_type, direction
+      ''', [f.toIso8601String(), t.toIso8601String()]);
+
+      final map = <String, double>{
+        'income': 0, 'cogs': 0, 'expense': 0,
+        'inventory': 0, 'asset': 0, 'liability': 0, 'waste': 0,
+      };
+      for (final r in rows) {
+        final type = r['account_type'] as String;
+        final dir = r['direction'] as String? ?? 'debit';
+        final amt = (r['total'] as num).toDouble();
+        final current = map[type] ?? 0;
+        // Credit income/liability = positive balance; debit = negative balance
+        if (type == 'income' || type == 'liability') {
+          map[type] = current + (dir == 'credit' ? amt : -amt);
+        } else {
+          map[type] = current + (dir == 'debit' ? amt : -amt);
+        }
+      }
+      return map;
+    } catch (_) {
+      return {'income': 0, 'cogs': 0, 'expense': 0, 'inventory': 0,
+              'asset': 0, 'liability': 0, 'waste': 0};
+    }
+  }
+
+  // ── Trial Balance ────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> getTrialBalance({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final balances = await getLedgerBalances(from: from, to: to);
+    final totalDebits = (balances['asset'] ?? 0) + (balances['cogs'] ?? 0) +
+        (balances['expense'] ?? 0) + (balances['inventory'] ?? 0) +
+        (balances['waste'] ?? 0);
+    final totalCredits = (balances['income'] ?? 0) + (balances['liability'] ?? 0);
+    return {
+      ...balances,
+      'total_debits': totalDebits,
+      'total_credits': totalCredits,
+      'is_balanced': (totalDebits - totalCredits).abs() < 0.01,
+    };
+  }
+
+  // ── Customer Dr/Cr Ledger ────────────────────────────────────────────────────
+  /// Returns a chronological Dr/Cr statement for a customer with running balance.
+  /// Sources: bills (Dr), payments recorded in bill_payment_splits (Cr).
+  Future<Map<String, dynamic>> getCustomerLedger(int customerId) async {
+    final db = await _db.database;
+    final customerRows = await db.query('customers',
+        where: 'id = ?', whereArgs: [customerId]);
+    if (customerRows.isEmpty) return {'customer': {}, 'entries': [], 'closing_balance': 0.0};
+
+    final customer = customerRows.first;
+    final double openingBalance =
+        (customer['outstanding_balance'] as num?)?.toDouble() ?? 0;
+
+    // Bills (debit — customer owes)
+    final bills = await db.rawQuery('''
+      SELECT created_at as date,
+             'Invoice #' || bill_number as description,
+             total_amount as debit, 0.0 as credit
+      FROM bills
+      WHERE customer_id = ? AND (status IS NULL OR status != 'cancelled')
+      ORDER BY created_at ASC
+    ''', [customerId]);
+
+    // Returns (credit — customer is owed)
+    final returns = await db.rawQuery('''
+      SELECT sr.created_at as date,
+             'Return #' || sr.return_number as description,
+             0.0 as debit, sr.total_return_amount as credit
+      FROM sale_returns sr
+      JOIN bills b ON b.id = sr.original_bill_id
+      WHERE b.customer_id = ?
+      ORDER BY sr.created_at ASC
+    ''', [customerId]);
+
+    final all = [...bills, ...returns];
+    all.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
+
+    // Compute running balance
+    double balance = openingBalance;
+    final entries = all.map((r) {
+      final debit = (r['debit'] as num?)?.toDouble() ?? 0;
+      final credit = (r['credit'] as num?)?.toDouble() ?? 0;
+      balance += debit - credit;
+      return {
+        'date': r['date'],
+        'description': r['description'],
+        'debit': debit,
+        'credit': credit,
+        'balance': balance,
+      };
+    }).toList();
+
+    return {
+      'customer': customer,
+      'opening_balance': openingBalance,
+      'entries': entries,
+      'closing_balance': balance,
+    };
+  }
+
+  // ── Supplier Dr/Cr Ledger ────────────────────────────────────────────────────
+  /// Returns a chronological Dr/Cr statement for a supplier with running balance.
+  Future<Map<String, dynamic>> getSupplierLedger(int supplierId) async {
+    final db = await _db.database;
+    final supplierRows = await db.query('suppliers',
+        where: 'id = ?', whereArgs: [supplierId]);
+    if (supplierRows.isEmpty) return {'supplier': {}, 'entries': [], 'closing_balance': 0.0};
+
+    final supplier = supplierRows.first;
+    final double openingBalance =
+        (supplier['outstanding_balance'] as num?)?.toDouble() ?? 0;
+
+    // Purchases (credit — we owe supplier)
+    final purchases = await db.rawQuery('''
+      SELECT created_at as date,
+             'Purchase #' || purchase_number as description,
+             0.0 as debit, total_amount as credit
+      FROM purchases
+      WHERE supplier_id = ?
+      ORDER BY created_at ASC
+    ''', [supplierId]);
+
+    double balance = openingBalance;
+    final entries = (purchases as List<Map<String, dynamic>>).map((r) {
+      final credit = (r['credit'] as num?)?.toDouble() ?? 0;
+      balance += credit;
+      return {
+        'date': r['date'],
+        'description': r['description'],
+        'debit': 0.0,
+        'credit': credit,
+        'balance': balance,
+      };
+    }).toList();
+
+    return {
+      'supplier': supplier,
+      'opening_balance': openingBalance,
+      'entries': entries,
+      'closing_balance': balance,
+    };
+  }
+
+  // ── GSTR-1 Report ────────────────────────────────────────────────────────────
+  /// Returns structured GSTR-1 data: B2B invoices, B2C invoices, HSN summary.
+  Future<Map<String, dynamic>> getGstr1Report({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final db = await _db.database;
+
+    // B2B — bills with customer GSTIN
+    final b2b = await db.rawQuery('''
+      SELECT b.bill_number, b.created_at, b.customer_name, b.customer_gstin,
+             b.total_amount, b.gst_total, b.cgst_total, b.sgst_total, b.igst_total,
+             b.total_amount - b.gst_total as taxable_value
+      FROM bills b
+      WHERE b.created_at BETWEEN ? AND ?
+        AND b.customer_gstin IS NOT NULL
+        AND (b.status IS NULL OR b.status != 'cancelled')
+      ORDER BY b.created_at DESC
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+
+    // B2C — bills without GSTIN
+    final b2cResult = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(b.total_amount - b.gst_total), 0) as taxable_value,
+        COALESCE(SUM(b.cgst_total), 0) as cgst,
+        COALESCE(SUM(b.sgst_total), 0) as sgst,
+        COALESCE(SUM(b.igst_total), 0) as igst,
+        COUNT(*) as invoice_count
+      FROM bills b
+      WHERE b.created_at BETWEEN ? AND ?
+        AND (b.customer_gstin IS NULL OR b.customer_gstin = '')
+        AND (b.status IS NULL OR b.status != 'cancelled')
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+
+    // HSN-wise summary
+    final hsn = await db.rawQuery('''
+      SELECT COALESCE(p.hsn_code, 'N/A') as hsn_code,
+             COALESCE(p.unit, 'Pcs') as unit,
+             SUM(bi.quantity) as total_qty,
+             SUM(bi.total_price - bi.gst_amount) as taxable_value,
+             SUM(bi.gst_amount) as total_gst,
+             bi.gst_rate
+      FROM bill_items bi
+      JOIN bills b ON b.id = bi.bill_id
+      LEFT JOIN products p ON p.id = bi.product_id
+      WHERE b.created_at BETWEEN ? AND ?
+        AND (b.status IS NULL OR b.status != 'cancelled')
+      GROUP BY p.hsn_code, bi.gst_rate
+      ORDER BY taxable_value DESC
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+
+    return {
+      'period_from': from.toIso8601String().substring(0, 10),
+      'period_to': to.toIso8601String().substring(0, 10),
+      'b2b': b2b,
+      'b2c': b2cResult.isNotEmpty ? b2cResult.first : {},
+      'hsn_summary': hsn,
+    };
+  }
+
+  // ── Day Close Summary ────────────────────────────────────────────────────────
+  /// Computes all the numbers needed to close a business day.
+  Future<Map<String, dynamic>> getDayCloseSummary(DateTime date) async {
+    final db = await _db.database;
+    final dateStr = date.toIso8601String().substring(0, 10);
+
+    final salesResult = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(total_amount), 0) as total_sales,
+        COUNT(*) as bill_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_mode) IN ('cash') THEN total_amount ELSE 0 END), 0) as cash_sales,
+        COALESCE(SUM(CASE WHEN LOWER(payment_mode) NOT IN ('cash','split') THEN total_amount ELSE 0 END), 0) as digital_sales
+      FROM bills
+      WHERE DATE(created_at) = ? AND (status IS NULL OR status != 'cancelled')
+    ''', [dateStr]);
+
+    final splitCash = await db.rawQuery('''
+      SELECT COALESCE(SUM(bps.amount), 0) as split_cash
+      FROM bill_payment_splits bps
+      JOIN bills b ON b.id = bps.bill_id
+      WHERE DATE(b.created_at) = ? AND LOWER(bps.payment_mode) = 'cash'
+    ''', [dateStr]);
+
+    final expensesResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) as total_expenses
+      FROM expenses WHERE DATE(date) = ?
+    ''', [dateStr]);
+
+    final returnsResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(total_return_amount), 0) as total_returns
+      FROM sale_returns WHERE DATE(created_at) = ?
+    ''', [dateStr]);
+
+    final purchasesResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(total_amount), 0) as total_purchases
+      FROM purchases WHERE DATE(created_at) = ?
+    ''', [dateStr]);
+
+    final s = salesResult.first;
+    final totalSales = (s['total_sales'] as num).toDouble();
+    final billCount = (s['bill_count'] as int? ?? 0);
+    final cashSales = (s['cash_sales'] as num).toDouble() +
+        ((splitCash.first['split_cash'] as num?)?.toDouble() ?? 0);
+    final digitalSales = (s['digital_sales'] as num).toDouble();
+    final expenses = (expensesResult.first['total_expenses'] as num).toDouble();
+    final returns = (returnsResult.first['total_returns'] as num).toDouble();
+    final purchases = (purchasesResult.first['total_purchases'] as num).toDouble();
+
+    return {
+      'date': dateStr,
+      'total_sales': totalSales,
+      'bill_count': billCount,
+      'cash_sales': cashSales,
+      'digital_sales': digitalSales,
+      'total_expenses': expenses,
+      'total_returns': returns,
+      'total_purchases': purchases,
+      'net_cash': cashSales - expenses,
+    };
+  }
+
+  // ── Day Close CRUD ───────────────────────────────────────────────────────────
+  Future<bool> isDayClosed(DateTime date) async {
+    final db = await _db.database;
+    final dateStr = date.toIso8601String().substring(0, 10);
+    final rows = await db.query('day_close',
+        where: 'close_date = ?', whereArgs: [dateStr]);
+    return rows.isNotEmpty;
+  }
+
+  Future<void> saveCloseDay({
+    required DateTime date,
+    required double cashOpening,
+    required double cashClosing,
+    required Map<String, dynamic> summary,
+    String? notes,
+    String? closedBy,
+  }) async {
+    final db = await _db.database;
+    final dateStr = date.toIso8601String().substring(0, 10);
+    final cashVariance = cashClosing -
+        (cashOpening + (summary['cash_sales'] as num).toDouble() -
+            (summary['total_expenses'] as num).toDouble());
+    await db.insert('day_close', {
+      'close_date': dateStr,
+      'cash_opening': cashOpening,
+      'cash_closing': cashClosing,
+      'cash_variance': cashVariance,
+      'total_sales': summary['total_sales'],
+      'total_expenses': summary['total_expenses'],
+      'total_returns': summary['total_returns'],
+      'total_purchases': summary['total_purchases'],
+      'cash_sales': summary['cash_sales'],
+      'digital_sales': summary['digital_sales'],
+      'bill_count': summary['bill_count'],
+      'notes': notes,
+      'closed_by': closedBy,
+      'created_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getDayCloseHistory({int limit = 30}) async {
+    final db = await _db.database;
+    try {
+      return db.query('day_close', orderBy: 'close_date DESC', limit: limit);
+    } catch (_) { return []; }
   }
 }

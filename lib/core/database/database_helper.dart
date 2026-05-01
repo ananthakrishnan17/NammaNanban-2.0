@@ -35,7 +35,8 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 14, // bumped from 13 → 14: direction column on ledger_entries for proper double-entry
+      version: 15, // v14: direction on ledger_entries + sale_return_items conversion cols
+                   // v15: day_close table for EOD settlement + batches table
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -381,6 +382,40 @@ class DatabaseHelper {
         quantity_change        REAL,
         created_at             TEXT NOT NULL)''');
     } catch (_) {}
+
+    // ── day_close ─────────────────────────────────────────────────────────
+    try {
+      await db.execute('''CREATE TABLE IF NOT EXISTS day_close (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        close_date       TEXT NOT NULL UNIQUE,
+        cash_opening     REAL NOT NULL DEFAULT 0.0,
+        cash_closing     REAL NOT NULL DEFAULT 0.0,
+        cash_variance    REAL NOT NULL DEFAULT 0.0,
+        total_sales      REAL NOT NULL DEFAULT 0.0,
+        total_expenses   REAL NOT NULL DEFAULT 0.0,
+        total_returns    REAL NOT NULL DEFAULT 0.0,
+        total_purchases  REAL NOT NULL DEFAULT 0.0,
+        cash_sales       REAL NOT NULL DEFAULT 0.0,
+        digital_sales    REAL NOT NULL DEFAULT 0.0,
+        bill_count       INTEGER NOT NULL DEFAULT 0,
+        notes            TEXT,
+        closed_by        TEXT,
+        created_at       TEXT NOT NULL)''');
+    } catch (_) {}
+
+    // ── batches ───────────────────────────────────────────────────────────
+    try {
+      await db.execute('''CREATE TABLE IF NOT EXISTS batches (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id   INTEGER NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+        purchase_id  INTEGER REFERENCES purchases (id) ON DELETE SET NULL,
+        batch_number TEXT,
+        expiry_date  TEXT,
+        qty_in       REAL NOT NULL DEFAULT 0.0,
+        qty_remaining REAL NOT NULL DEFAULT 0.0,
+        unit_cost    REAL NOT NULL DEFAULT 0.0,
+        created_at   TEXT NOT NULL)''');
+    } catch (_) {}
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -524,11 +559,51 @@ class DatabaseHelper {
       try { await db.execute("ALTER TABLE product_uoms ADD COLUMN unit_role TEXT NOT NULL DEFAULT 'sale'"); } catch (_) {}
     }
 
-    // ── v14 — Double-entry direction column on ledger_entries ──────────────
-    // 'debit' (default) or 'credit'. Required for balance validation in
-    // LedgerService and for the Ledger Dashboard balanced/mismatch indicator.
+    // ── v14 — Ledger direction + sale_return_items conversion columns ──────
     if (oldVersion < 14) {
+      // Add direction to ledger_entries (debit by default)
       try { await db.execute("ALTER TABLE ledger_entries ADD COLUMN direction TEXT NOT NULL DEFAULT 'debit'"); } catch (_) {}
+      // Add conversion info to sale_return_items for full audit trail
+      try { await db.execute("ALTER TABLE sale_return_items ADD COLUMN sale_type TEXT DEFAULT 'retail'"); } catch (_) {}
+      try { await db.execute("ALTER TABLE sale_return_items ADD COLUMN conversion_qty REAL DEFAULT 1.0"); } catch (_) {}
+      try { await db.execute("ALTER TABLE sale_return_items ADD COLUMN wholesale_to_retail_qty REAL DEFAULT 1.0"); } catch (_) {}
+      try { await db.execute("ALTER TABLE sale_return_items ADD COLUMN base_qty_restored REAL DEFAULT 0.0"); } catch (_) {}
+      // Create ERP tables if not yet created (users upgrading from < v11)
+      await _createErpTables(db);
+    }
+
+    // ── v15 — Day close + batches tables ───────────────────────────────────
+    if (oldVersion < 15) {
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS day_close (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          close_date       TEXT NOT NULL UNIQUE,
+          cash_opening     REAL NOT NULL DEFAULT 0.0,
+          cash_closing     REAL NOT NULL DEFAULT 0.0,
+          cash_variance    REAL NOT NULL DEFAULT 0.0,
+          total_sales      REAL NOT NULL DEFAULT 0.0,
+          total_expenses   REAL NOT NULL DEFAULT 0.0,
+          total_returns    REAL NOT NULL DEFAULT 0.0,
+          total_purchases  REAL NOT NULL DEFAULT 0.0,
+          cash_sales       REAL NOT NULL DEFAULT 0.0,
+          digital_sales    REAL NOT NULL DEFAULT 0.0,
+          bill_count       INTEGER NOT NULL DEFAULT 0,
+          notes            TEXT,
+          closed_by        TEXT,
+          created_at       TEXT NOT NULL)''');
+      } catch (_) {}
+      try {
+        await db.execute('''CREATE TABLE IF NOT EXISTS batches (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id    INTEGER NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+          purchase_id   INTEGER REFERENCES purchases (id) ON DELETE SET NULL,
+          batch_number  TEXT,
+          expiry_date   TEXT,
+          qty_in        REAL NOT NULL DEFAULT 0.0,
+          qty_remaining REAL NOT NULL DEFAULT 0.0,
+          unit_cost     REAL NOT NULL DEFAULT 0.0,
+          created_at    TEXT NOT NULL)''');
+      } catch (_) {}
     }
 
     await _seed(db, now);
