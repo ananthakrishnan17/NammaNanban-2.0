@@ -175,7 +175,7 @@ class BillingRepositoryImpl implements BillingRepository {
       //   CR Inventory             totalCOGS
       try {
         final ledger = LedgerService.instance;
-        final licenseId = await ledger.getLicenseId();
+        final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
         final nowStr = now.toIso8601String();
 
         final ledgerEntries = <LedgerEntryInput>[];
