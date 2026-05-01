@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../domain/entities/bill_template.dart';
+import '../../domain/entities/bill_template.dart';
 
 /// Persists and loads [BillTemplateConfig] using [SharedPreferences].
 ///

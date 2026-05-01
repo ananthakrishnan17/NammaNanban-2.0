@@ -244,7 +244,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
   /// Fire-and-forget auto-print.  Errors are swallowed so they never block
   /// the billing flow; a snackbar informs the user on failure/no printer.
-  void _tryAutoPrint(Bill bill) async {
+  Future<void> _tryAutoPrint(Bill bill) async {
     try {
       final config = await PrinterSettingsRepository.instance.loadConfig();
       if (!config.autoPrint) return;
