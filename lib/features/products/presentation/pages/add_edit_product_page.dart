@@ -8,6 +8,7 @@ import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
 import '../../../users/domain/entities/product_uom.dart';
 import '../../../users/domain/entities/multi_uom_editor.dart';
+import '../../domain/entities/bom_ingredient.dart';
 import '../../domain/entities/product.dart';
 import '../bloc/product_bloc.dart';
 import '../../../../shared/widgets/searchable_dropdown_with_add.dart';
@@ -28,9 +29,13 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   double _gstRate = 0.0;
   bool _gstInclusive = true;
   String _rateType = 'fixed';
+  String _itemType = 'physical'; // 'physical' | 'composite_recipe'
+  List<BomIngredient> _bomIngredients = [];
   bool _isActive = true;
   List<ProductUom> _pendingUoms = [];
   bool get isEditing => widget.product != null;
+  bool get _isRecipe => _itemType == 'composite_recipe';
+  double get _bomCost => _bomIngredients.fold(0.0, (s, i) => s + i.totalCost);
 
   @override void initState() {
     super.initState();
@@ -51,6 +56,8 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _gstInclusive = p?.gstInclusive ?? true;
     _rateType = p?.rateType ?? 'fixed';
     _isActive = p?.isActive ?? true;
+    _itemType = p?.itemType ?? 'physical';
+    _bomIngredients = p?.bomIngredients ?? [];
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MastersBloc>().add(LoadAllMasters());
       if (isEditing && widget.product!.id != null) {
@@ -67,12 +74,16 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     final now = DateTime.now();
+    // For composite_recipe, purchase price = BOM cost
+    final purchasePrice = _itemType == 'composite_recipe'
+        ? _bomCost
+        : double.parse(_buyCtrl.text);
     final p = ProductModel(
       id: widget.product?.id, name: _nameCtrl.text.trim(),
       categoryId: _selectedCategory?.id, categoryName: _selectedCategory?.name,
       brandId: _selectedBrand?.id, brandName: _selectedBrand?.name,
       uomId: _selectedUom?.id, uomShortName: _selectedUom?.shortName,
-      purchasePrice: double.parse(_buyCtrl.text),
+      purchasePrice: purchasePrice,
       sellingPrice: double.parse(_sellCtrl.text),
       wholesalePrice: double.tryParse(_wsCtrl.text) ?? 0.0,
       stockQuantity: double.parse(_stockCtrl.text),
@@ -86,6 +97,8 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       retailUnit: _retailUnitCtrl.text.trim().isEmpty ? 'kg' : _retailUnitCtrl.text.trim(),
       wholesaleToRetailQty: double.tryParse(_wsToRetailQtyCtrl.text) ?? 1.0,
       retailPrice: double.tryParse(_retailPriceCtrl.text) ?? 0.0,
+      itemType: _itemType,
+      attributes: BomIngredient.listToAttributesJson(_bomIngredients),
     );
     if (isEditing) {
       context.read<ProductBloc>().add(UpdateProduct(p));
@@ -118,6 +131,15 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               TextFormField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Product Name *', prefixIcon: Icon(Icons.inventory_2)),
                   validator: (v) => v!.trim().isEmpty ? 'Name required' : null, textCapitalization: TextCapitalization.words),
               SizedBox(height: 10.h),
+
+              // PRODUCT TYPE
+              _sec('🧩 Product Type'),
+              Row(children: [
+                Expanded(child: _typeBtn('physical', 'Physical', '📦', 'Regular stocked item')),
+                SizedBox(width: 10.w),
+                Expanded(child: _typeBtn('composite_recipe', 'Recipe / BOM', '🍳', 'Built from ingredients')),
+              ]),
+              SizedBox(height: 20.h),
 
               // CATEGORY — inline quick add via ProductBloc.repository (direct DB call)
               SearchableDropdownWithAdd<Category>(
@@ -165,21 +187,25 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
 
               _sec('💰 Pricing'),
               Row(children: [
-                Expanded(child: TextFormField(controller: _buyCtrl, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Purchase Price *', prefixText: '₹ '),
-                    validator: (v) { if (v!.isEmpty) return 'Required'; if (double.tryParse(v) == null) return 'Invalid'; return null; },
-                    onChanged: (_) => setState(() {}))),
-                SizedBox(width: 10.w),
+                if (!_isRecipe) ...[
+                  Expanded(child: TextFormField(controller: _buyCtrl, keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Purchase Price *', prefixText: '₹ '),
+                      validator: (v) { if (!_isRecipe) { if (v!.isEmpty) return 'Required'; if (double.tryParse(v) == null) return 'Invalid'; } return null; },
+                      onChanged: (_) => setState(() {}))),
+                  SizedBox(width: 10.w),
+                ],
                 Expanded(child: TextFormField(controller: _sellCtrl, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Retail Price *', prefixText: '₹ '),
+                    decoration: const InputDecoration(labelText: 'Selling Price *', prefixText: '₹ '),
                     validator: (v) { if (v!.isEmpty) return 'Required'; if (double.tryParse(v) == null) return 'Invalid'; return null; },
                     onChanged: (_) => setState(() {}))),
               ]),
               SizedBox(height: 10.h),
-              TextFormField(controller: _wsCtrl, keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Wholesale Price (optional)', prefixText: '₹ ', prefixIcon: Icon(Icons.store)),
-                  onChanged: (_) => setState(() {})),
-              SizedBox(height: 8.h), _profitPreview(),
+              if (!_isRecipe) ...[
+                TextFormField(controller: _wsCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Wholesale Price (optional)', prefixText: '₹ ', prefixIcon: Icon(Icons.store)),
+                    onChanged: (_) => setState(() {})),
+                SizedBox(height: 8.h), _profitPreview(),
+              ],
               SizedBox(height: 20.h),
 
               _sec('🏷️ Rate Type'),
@@ -308,6 +334,30 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
               ),
               SizedBox(height: 24.h),
 
+              // ── BOM Builder (composite_recipe only) ──────────────────────
+              if (_isRecipe) ...[
+                _sec('🔧 Bill of Materials (Recipe)'),
+                _BomBuilderCard(
+                  products: productState is ProductsLoaded ? productState.products : [],
+                  ingredients: _bomIngredients,
+                  onChanged: (updated) => setState(() => _bomIngredients = updated),
+                ),
+                SizedBox(height: 8.h),
+                if (_bomIngredients.isNotEmpty)
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(10.r),
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      Text('Total BOM Cost', style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+                      Text('₹${_bomCost.toStringAsFixed(2)}', style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                SizedBox(height: 24.h),
+              ],
+
               // ── Sale Units (Loose Sale) ───────────────────────────────────
               _sec('📏 Sale Units (Loose Sale)'),
               if (!isEditing)
@@ -418,4 +468,278 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     );
   }
   Widget _gstRow(String l, double v) => Padding(padding: EdgeInsets.symmetric(vertical: 1.h), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: AppTheme.caption), Text('₹${v.toStringAsFixed(2)}', style: AppTheme.caption)]));
+
+  Widget _typeBtn(String type, String title, String emoji, String desc) {
+    final sel = _itemType == type;
+    return GestureDetector(
+      onTap: () => setState(() => _itemType = type),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: EdgeInsets.all(12.w),
+        decoration: BoxDecoration(
+          color: sel ? AppTheme.primary.withOpacity(0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(color: sel ? AppTheme.primary : AppTheme.divider, width: sel ? 2 : 1),
+        ),
+        child: Column(children: [
+          Text(emoji, style: TextStyle(fontSize: 22.sp)),
+          SizedBox(height: 4.h),
+          Text(title, style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w600,
+              color: sel ? AppTheme.primary : AppTheme.textPrimary, fontFamily: 'Poppins')),
+          SizedBox(height: 2.h),
+          Text(desc, style: AppTheme.caption.copyWith(fontSize: 9.sp), textAlign: TextAlign.center),
+        ]),
+      ),
+    );
+  }
+}
+
+// ─── BOM Builder Card ─────────────────────────────────────────────────────────
+class _BomBuilderCard extends StatefulWidget {
+  final List<Product> products;
+  final List<BomIngredient> ingredients;
+  final void Function(List<BomIngredient>) onChanged;
+
+  const _BomBuilderCard({
+    required this.products,
+    required this.ingredients,
+    required this.onChanged,
+  });
+
+  @override
+  State<_BomBuilderCard> createState() => _BomBuilderCardState();
+}
+
+class _BomBuilderCardState extends State<_BomBuilderCard> {
+  void _addIngredient() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _IngredientPickerSheet(
+        products: widget.products,
+        existing: widget.ingredients,
+        onAdded: (ing) {
+          final updated = [...widget.ingredients, ing];
+          widget.onChanged(updated);
+        },
+      ),
+    );
+  }
+
+  void _remove(int index) {
+    final updated = [...widget.ingredients]..removeAt(index);
+    widget.onChanged(updated);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14.r),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: EdgeInsets.all(14.w),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('Ingredients', style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+            FilledButton.icon(
+              onPressed: _addIngredient,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ]),
+        ),
+        if (widget.ingredients.isEmpty)
+          Padding(
+            padding: EdgeInsets.only(left: 14.w, right: 14.w, bottom: 14.h),
+            child: Text('No ingredients yet. Tap "Add" to build the recipe.',
+                style: AppTheme.caption),
+          )
+        else
+          ...widget.ingredients.asMap().entries.map((e) {
+            final i = e.value;
+            return Container(
+              margin: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(10.r),
+              ),
+              child: Row(children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(i.productName, style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+                  SizedBox(height: 2.h),
+                  Text('${i.quantity} ${i.unit}  •  ₹${i.unitCost}/unit  →  ₹${i.totalCost.toStringAsFixed(2)}',
+                      style: AppTheme.caption),
+                ])),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline, color: AppTheme.danger),
+                  onPressed: () => _remove(e.key),
+                ),
+              ]),
+            );
+          }),
+        SizedBox(height: 4.h),
+      ]),
+    );
+  }
+}
+
+// ─── Ingredient Picker Sheet ──────────────────────────────────────────────────
+class _IngredientPickerSheet extends StatefulWidget {
+  final List<Product> products;
+  final List<BomIngredient> existing;
+  final void Function(BomIngredient) onAdded;
+
+  const _IngredientPickerSheet({
+    required this.products,
+    required this.existing,
+    required this.onAdded,
+  });
+
+  @override
+  State<_IngredientPickerSheet> createState() => _IngredientPickerSheetState();
+}
+
+class _IngredientPickerSheetState extends State<_IngredientPickerSheet> {
+  Product? _selected;
+  final _qtyCtrl = TextEditingController(text: '1');
+  final _costCtrl = TextEditingController();
+  String _searchQ = '';
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    _costCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Only show physical products as ingredients (not recipes themselves)
+    final filtered = widget.products
+        .where((p) =>
+            p.itemType != 'composite_recipe' &&
+            p.name.toLowerCase().contains(_searchQ.toLowerCase()))
+        .toList();
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
+      child: Column(children: [
+        SizedBox(height: 12.h),
+        Container(width: 40.w, height: 4.h,
+            decoration: BoxDecoration(color: AppTheme.divider,
+                borderRadius: BorderRadius.circular(2.r))),
+        SizedBox(height: 12.h),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.w),
+          child: Text('Add Ingredient', style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+        ),
+        SizedBox(height: 8.h),
+        Expanded(
+          child: _selected == null
+              ? Column(children: [
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.w),
+                    child: TextField(
+                      onChanged: (v) => setState(() => _searchQ = v),
+                      decoration: const InputDecoration(
+                          hintText: 'Search ingredient...', prefixIcon: Icon(Icons.search)),
+                    ),
+                  ),
+                  SizedBox(height: 8.h),
+                  Expanded(child: ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) => ListTile(
+                      title: Text(filtered[i].name, style: AppTheme.body),
+                      subtitle: Text(
+                          'Stock: ${filtered[i].stockQuantity} ${filtered[i].unit}  •  ₹${filtered[i].purchasePrice}',
+                          style: AppTheme.caption),
+                      onTap: () => setState(() {
+                        _selected = filtered[i];
+                        _costCtrl.text = filtered[i].purchasePrice.toStringAsFixed(2);
+                      }),
+                    ),
+                  )),
+                ])
+              : Padding(
+                  padding: EdgeInsets.all(16.w),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Expanded(child: Text(_selected!.name, style: AppTheme.heading2)),
+                      TextButton(onPressed: () => setState(() => _selected = null),
+                          child: const Text('Change')),
+                    ]),
+                    SizedBox(height: 12.h),
+                    Row(children: [
+                      Expanded(child: TextField(
+                        controller: _qtyCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Quantity',
+                          suffixText: _selected!.unit,
+                        ),
+                      )),
+                      SizedBox(width: 10.w),
+                      Expanded(child: TextField(
+                        controller: _costCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Unit Cost (₹)',
+                          prefixText: '₹ ',
+                        ),
+                      )),
+                    ]),
+                    SizedBox(height: 16.h),
+                    Builder(builder: (ctx) {
+                      final qty = double.tryParse(_qtyCtrl.text) ?? 1;
+                      final cost = double.tryParse(_costCtrl.text) ?? 0;
+                      return Container(
+                        padding: EdgeInsets.all(10.w),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary.withOpacity(0.07),
+                          borderRadius: BorderRadius.circular(10.r),
+                        ),
+                        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                          Text('Line Cost', style: AppTheme.caption),
+                          Text('₹${(qty * cost).toStringAsFixed(2)}',
+                              style: AppTheme.body.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w700)),
+                        ]),
+                      );
+                    }),
+                    SizedBox(height: 16.h),
+                    ElevatedButton(
+                      onPressed: () {
+                        final qty = double.tryParse(_qtyCtrl.text) ?? 1;
+                        final cost = double.tryParse(_costCtrl.text) ?? _selected!.purchasePrice;
+                        widget.onAdded(BomIngredient(
+                          productId: _selected!.id,
+                          productName: _selected!.name,
+                          quantity: qty,
+                          unit: _selected!.unit,
+                          unitCost: cost,
+                        ));
+                        Navigator.pop(context);
+                      },
+                      child: const Text('Add Ingredient'),
+                    ),
+                  ]),
+                ),
+        ),
+      ]),
+    );
+  }
 }

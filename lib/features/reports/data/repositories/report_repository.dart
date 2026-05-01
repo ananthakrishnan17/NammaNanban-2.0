@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../../../core/database/database_helper.dart';
 import '../../../billing/domain/entities/bill.dart';
 
@@ -728,5 +730,143 @@ class ReportRepository {
         where: 'is_active = 1',
         columns: ['id', 'name'],
         orderBy: 'name ASC');
+  }
+
+  // ── Theoretical Yield Report ─────────────────────────────────────────────────
+  /// Returns composite_recipe products with their theoretical yield based on
+  /// current ingredient stock. Each row contains name, unit, max_yield,
+  /// limiting_ingredient, bom_cost, and selling_price.
+  Future<List<Map<String, dynamic>>> getTheoreticalYieldReport() async {
+    final db = await _db.database;
+    // Fetch all composite_recipe products (v12+; graceful fallback for older DBs)
+    List<Map<String, dynamic>> recipes;
+    try {
+      recipes = await db.rawQuery(
+          "SELECT id, name, unit, selling_price, attributes FROM products "
+          "WHERE item_type = 'composite_recipe' AND is_active = 1");
+    } catch (_) {
+      return []; // item_type column not yet added
+    }
+    if (recipes.isEmpty) return [];
+
+    // Fetch current stock for all products
+    final stockRows = await db.rawQuery(
+        "SELECT id, stock_quantity FROM products WHERE is_active = 1");
+    final stockMap = <int, double>{
+      for (final r in stockRows)
+        (r['id'] as int): (r['stock_quantity'] as num).toDouble()
+    };
+
+    final results = <Map<String, dynamic>>[];
+    for (final recipe in recipes) {
+      final attributesStr = recipe['attributes'] as String? ?? '{}';
+      final List<dynamic> bomRaw;
+      try {
+        final decoded = jsonDecode(attributesStr) as Map<String, dynamic>?;
+        bomRaw = decoded?['bom'] as List<dynamic>? ?? [];
+      } catch (_) {
+        bomRaw = [];
+      }
+      if (bomRaw.isEmpty) continue;
+
+      double maxYield = double.infinity;
+      String? limitingIngredient;
+      double bomCost = 0;
+
+      for (final ingRaw in bomRaw) {
+        final ing = ingRaw as Map<String, dynamic>;
+        final productId = ing['product_id'] as int?;
+        final qty = (ing['quantity'] as num?)?.toDouble() ?? 0;
+        final unitCost = (ing['unit_cost'] as num?)?.toDouble() ?? 0;
+        bomCost += qty * unitCost;
+        if (productId == null || qty <= 0) continue;
+        final avail = stockMap[productId] ?? 0;
+        final possible = avail / qty;
+        if (possible < maxYield) {
+          maxYield = possible;
+          limitingIngredient = ing['product_name'] as String?;
+        }
+      }
+
+      if (maxYield == double.infinity) maxYield = 0;
+
+      results.add({
+        'id': recipe['id'],
+        'name': recipe['name'],
+        'unit': recipe['unit'],
+        'selling_price': recipe['selling_price'],
+        'bom_cost': bomCost,
+        'max_yield': maxYield.floorToDouble(),
+        'limiting_ingredient': maxYield == 0 ? limitingIngredient : null,
+      });
+    }
+    return results;
+  }
+
+  // ── Phase 4: Ledger-based Profit & Loss ─────────────────────────────────────
+  /// Aggregates P&L from ledger_entries (double-entry sub-ledger introduced in
+  /// Phase 1). Falls back to the legacy query when no ledger rows exist.
+  Future<Map<String, dynamic>> getProfitAndLossFromLedger(
+      {required DateTime from, required DateTime to}) async {
+    final db = await _db.database;
+
+    // Check if ledger_entries table exists and has data in range
+    int ledgerCount = 0;
+    try {
+      final check = await db.rawQuery(
+          "SELECT COUNT(*) as cnt FROM ledger_entries WHERE created_at BETWEEN ? AND ?",
+          [from.toIso8601String(), to.toIso8601String()]);
+      ledgerCount = (check.first['cnt'] as int? ?? 0);
+    } catch (_) {}
+
+    if (ledgerCount == 0) {
+      // Fall back to legacy bills/expenses query
+      return getProfitAndLoss(from: from, to: to);
+    }
+
+    // Aggregate by account_type from ledger_entries joined to erp_transactions
+    final rows = await db.rawQuery('''
+      SELECT le.account_type, SUM(le.amount) as total
+      FROM ledger_entries le
+      JOIN erp_transactions et ON et.id = le.transaction_id
+      WHERE le.created_at BETWEEN ? AND ?
+      GROUP BY le.account_type
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+
+    final grouped = <String, double>{};
+    for (final r in rows) {
+      grouped[r['account_type'] as String] =
+          (r['total'] as num?)?.toDouble() ?? 0;
+    }
+
+    final income = grouped['income'] ?? 0;
+    final cogs = grouped['cogs'] ?? 0;
+    final expenses = grouped['expense'] ?? 0;
+    final waste = grouped['waste'] ?? 0; // spoilage / write-offs
+
+    // Also pull returns from sale_returns for deduction
+    final returnsResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(total_return_amount), 0) as return_deductions
+      FROM sale_returns WHERE created_at BETWEEN ? AND ?
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+    final returnDeductions =
+        (returnsResult.first['return_deductions'] as num).toDouble();
+
+    final netSales = income - returnDeductions;
+    final grossProfit = netSales - cogs;
+    final netProfit = grossProfit - expenses - waste;
+
+    return {
+      'income': income,
+      'return_deductions': returnDeductions,
+      'net_sales': netSales,
+      'cogs': cogs,
+      'gross_profit': grossProfit,
+      'expenses': expenses,
+      'waste': waste,
+      'net_profit': netProfit,
+      'profit_margin': netSales > 0 ? (netProfit / netSales) * 100 : 0.0,
+      'source': 'ledger',
+    };
   }
 }
