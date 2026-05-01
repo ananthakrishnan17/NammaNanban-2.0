@@ -158,7 +158,7 @@ class PurchaseRepository {
       //   CR Asset/Liability  totalCost (cash/bank/payable)
       try {
         final ledger = LedgerService.instance;
-        final licenseId = await ledger.getLicenseId();
+        final licenseId = await LedgerService.resolveLicenseId(_db);
         final nowStr = now.toIso8601String();
 
         final ledgerEntries = <LedgerEntryInput>[];
