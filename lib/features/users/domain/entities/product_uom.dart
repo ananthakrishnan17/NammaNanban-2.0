@@ -2,11 +2,14 @@ import 'package:equatable/equatable.dart';
 import '../../../../../../../core/database/database_helper.dart';
 
 // ─── ProductUom Entity ─────────────────────────────────────────────────────────
-/// One row = one UOM that this product can be sold in
-/// e.g. Product "Biscuit" can have:
-///   Piece  (1x)  → ₹5  retail, ₹4.50 wholesale
-///   Dozen  (12x) → ₹55 retail, ₹50   wholesale
-///   Box    (48x) → ₹200 retail, ₹180  wholesale
+/// One row = one UOM that this product can be purchased or sold in.
+///
+/// [unitRole] distinguishes usage:
+///   'sale'     – shown in the billing UOM picker (retail / wholesale)
+///   'purchase' – used for recording stock-in; not shown at billing
+///
+/// [conversionQty] is the multiplier to the product's base stock unit.
+///   e.g. product base = kg, bag conversionQty = 22 → 1 bag adds 22 kg to stock.
 class ProductUom extends Equatable {
   final int? id;
   final int productId;
@@ -18,6 +21,7 @@ class ProductUom extends Equatable {
   final double wholesalePrice;
   final double purchasePrice;
   final bool isDefault;
+  final String unitRole; // 'sale' | 'purchase'
 
   const ProductUom({
     this.id,
@@ -30,6 +34,7 @@ class ProductUom extends Equatable {
     this.wholesalePrice = 0.0,
     this.purchasePrice = 0.0,
     this.isDefault = false,
+    this.unitRole = 'sale',
   });
 
   factory ProductUom.fromMap(Map<String, dynamic> m) => ProductUom(
@@ -43,6 +48,7 @@ class ProductUom extends Equatable {
     wholesalePrice: (m['wholesale_price'] as num?)?.toDouble() ?? 0.0,
     purchasePrice: (m['purchase_price'] as num?)?.toDouble() ?? 0.0,
     isDefault: (m['is_default'] as int? ?? 0) == 1,
+    unitRole: m['unit_role'] as String? ?? 'sale',
   );
 
   Map<String, dynamic> toMap() => {
@@ -56,6 +62,7 @@ class ProductUom extends Equatable {
     'wholesale_price': wholesalePrice,
     'purchase_price': purchasePrice,
     'is_default': isDefault ? 1 : 0,
+    'unit_role': unitRole,
   };
 
   double effectivePrice(bool isWholesale) =>
@@ -67,6 +74,7 @@ class ProductUom extends Equatable {
   ProductUom copyWith({
     double? sellingPrice, double? wholesalePrice,
     double? purchasePrice, bool? isDefault, double? conversionQty,
+    String? unitRole,
   }) => ProductUom(
     id: id, productId: productId, uomId: uomId,
     uomName: uomName, uomShortName: uomShortName,
@@ -75,9 +83,10 @@ class ProductUom extends Equatable {
     wholesalePrice: wholesalePrice ?? this.wholesalePrice,
     purchasePrice: purchasePrice ?? this.purchasePrice,
     isDefault: isDefault ?? this.isDefault,
+    unitRole: unitRole ?? this.unitRole,
   );
 
-  @override List<Object?> get props => [id, productId, uomId, conversionQty];
+  @override List<Object?> get props => [id, productId, uomId, conversionQty, unitRole];
 }
 
 // ─── Repository ────────────────────────────────────────────────────────────────
@@ -85,20 +94,31 @@ class ProductUomRepository {
   final DatabaseHelper _db;
   ProductUomRepository(this._db);
 
+  /// Returns **sale** UOMs only — used by billing UOM picker.
   Future<List<ProductUom>> getUomsForProduct(int productId) async {
     final db = await _db.database;
     final rows = await db.query('product_uoms',
-        where: 'product_id = ?', whereArgs: [productId],
+        where: "product_id = ? AND unit_role = 'sale'",
+        whereArgs: [productId],
+        orderBy: 'is_default DESC, conversion_qty ASC');
+    return rows.map((r) => ProductUom.fromMap(r)).toList();
+  }
+
+  /// Returns **purchase** UOMs only — used by add/edit product page.
+  Future<List<ProductUom>> getPurchaseUomsForProduct(int productId) async {
+    final db = await _db.database;
+    final rows = await db.query('product_uoms',
+        where: "product_id = ? AND unit_role = 'purchase'",
+        whereArgs: [productId],
         orderBy: 'is_default DESC, conversion_qty ASC');
     return rows.map((r) => ProductUom.fromMap(r)).toList();
   }
 
   Future<int> addUom(ProductUom uom) async {
     final db = await _db.database;
-    // If this is default, remove default from others
     if (uom.isDefault) {
       await db.update('product_uoms', {'is_default': 0},
-          where: 'product_id = ?', whereArgs: [uom.productId]);
+          where: "product_id = ? AND unit_role = ?", whereArgs: [uom.productId, uom.unitRole]);
     }
     return await db.insert('product_uoms', uom.toMap());
   }
@@ -107,7 +127,8 @@ class ProductUomRepository {
     final db = await _db.database;
     if (uom.isDefault) {
       await db.update('product_uoms', {'is_default': 0},
-          where: 'product_id = ? AND id != ?', whereArgs: [uom.productId, uom.id]);
+          where: 'product_id = ? AND id != ? AND unit_role = ?',
+          whereArgs: [uom.productId, uom.id, uom.unitRole]);
     }
     return (await db.update('product_uoms', uom.toMap(),
         where: 'id = ?', whereArgs: [uom.id])) > 0;
@@ -118,13 +139,21 @@ class ProductUomRepository {
     return (await db.delete('product_uoms', where: 'id = ?', whereArgs: [id])) > 0;
   }
 
-  Future<void> saveAllUoms(int productId, List<ProductUom> uoms) async {
+  /// Saves [uoms] for a product, scoped to [unitRole].
+  ///
+  /// Only rows with matching [unitRole] are deleted and re-inserted,
+  /// leaving the other role's rows untouched.
+  Future<void> saveAllUoms(int productId, List<ProductUom> uoms,
+      [String unitRole = 'sale']) async {
     final db = await _db.database;
-    // Delete existing, re-insert all
-    await db.delete('product_uoms', where: 'product_id = ?', whereArgs: [productId]);
+    await db.delete('product_uoms',
+        where: 'product_id = ? AND unit_role = ?', whereArgs: [productId, unitRole]);
     for (int i = 0; i < uoms.length; i++) {
-      await db.insert('product_uoms',
-          uoms[i].copyWith(isDefault: i == 0).toMap()..['product_id'] = productId);
+      final row = uoms[i]
+          .copyWith(isDefault: i == 0, unitRole: unitRole)
+          .toMap()
+        ..['product_id'] = productId;
+      await db.insert('product_uoms', row);
     }
   }
 }

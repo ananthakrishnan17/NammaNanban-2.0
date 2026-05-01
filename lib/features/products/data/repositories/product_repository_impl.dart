@@ -101,7 +101,8 @@ class ProductRepositoryImpl implements ProductRepository {
   @override Future<List<ProductUom>> getProductUoms(int productId) async {
     final db = await _dbHelper.database;
     final rows = await db.query('product_uoms',
-        where: 'product_id = ?', whereArgs: [productId],
+        where: "product_id = ? AND unit_role = 'sale'",
+        whereArgs: [productId],
         orderBy: 'is_default DESC, id ASC');
     return rows.map((m) => ProductUom.fromMap(m)).toList();
   }
