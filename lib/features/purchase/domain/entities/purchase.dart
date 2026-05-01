@@ -152,6 +152,77 @@ class PurchaseRepository {
             gstRate: item.gstRate, gstAmount: item.gstAmount, totalCost: item.totalCost));
       }
 
+      // ── Double-entry ledger ─────────────────────────────────────────────
+      // Purchase journal:
+      //   DR Inventory   totalCost (stock in, qty positive)
+      //   CR Asset/Liability  totalCost (cash/bank/payable)
+      try {
+        final ledger = LedgerService.instance;
+        final licenseId = await ledger.getLicenseId();
+        final nowStr = now.toIso8601String();
+
+        final ledgerEntries = <LedgerEntryInput>[];
+        for (int i = 0; i < purchaseItems.length; i++) {
+          final pi = purchaseItems[i];
+          final qty = items[i].quantity;
+          final wholesaleToRetailQty = (await txn.query('products',
+              columns: ['wholesale_to_retail_qty'],
+              where: 'id = ?', whereArgs: [pi.productId]))
+              .map((r) => (r['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0)
+              .firstOrNull ?? 1.0;
+          final stockQty = wholesaleToRetailQty > 1.0 ? qty * wholesaleToRetailQty : qty;
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'inventory', direction: 'debit',
+            amount: pi.totalCost, quantityChange: stockQty,
+          ));
+        }
+        // CR asset (cash out) or liability (payable) depending on payment mode
+        final creditType = paymentMode == 'credit' ? 'liability' : 'asset';
+        ledgerEntries.add(LedgerEntryInput(
+          accountType: creditType, direction: 'credit', amount: total,
+        ));
+        // Balance: sum of per-item debits may differ from total due to GST rounding.
+        // Use total as the single credit and adjust debit to match.
+        final debitTotal = ledgerEntries
+            .where((e) => e.direction == 'debit')
+            .fold(0.0, (s, e) => s + e.amount);
+        if ((debitTotal - total).abs() > 0.005) {
+          // Replace per-item debit entries with a single consolidated entry
+          ledgerEntries.removeWhere((e) => e.direction == 'debit');
+          double totalBaseQty = 0;
+          for (int i = 0; i < purchaseItems.length; i++) {
+            final qty = items[i].quantity;
+            final wholesaleToRetailQty = (await txn.query('products',
+                columns: ['wholesale_to_retail_qty'],
+                where: 'id = ?', whereArgs: [purchaseItems[i].productId]))
+                .map((r) => (r['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0)
+                .firstOrNull ?? 1.0;
+            totalBaseQty += wholesaleToRetailQty > 1.0 ? qty * wholesaleToRetailQty : qty;
+          }
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'inventory', direction: 'debit',
+            amount: total, quantityChange: totalBaseQty,
+          ));
+        }
+
+        await ledger.recordTransaction(
+          executor: txn,
+          type: 'purchase',
+          totalAmount: total,
+          tags: {
+            'purchase_id': purchaseId,
+            'supplier_name': supplierName,
+            'payment_mode': paymentMode,
+            'notes': notes,
+          },
+          licenseId: licenseId,
+          createdAt: nowStr,
+          entries: ledgerEntries,
+        );
+      } catch (_) {
+        rethrow;
+      }
+
       return Purchase(id: purchaseId, purchaseNumber: 'PUR-$purchaseId',
           supplierId: supplierId, supplierName: supplierName, items: purchaseItems,
           totalAmount: total, gstTotal: gstTotal, paymentMode: paymentMode,

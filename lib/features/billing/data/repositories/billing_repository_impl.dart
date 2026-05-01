@@ -167,6 +167,70 @@ class BillingRepositoryImpl implements BillingRepository {
             gstRate: cartItem.gstRate, gstAmount: gstAmt, totalPrice: itemTotal));
       }
 
+      // ── Double-entry ledger ─────────────────────────────────────────────
+      // Sale journal:
+      //   DR Asset (cash/bank)     totalAmount
+      //   CR Income (sales)        totalAmount
+      //   DR COGS                  totalCOGS  (per item: purchasePrice × baseQty)
+      //   CR Inventory             totalCOGS
+      try {
+        final ledger = LedgerService.instance;
+        final licenseId = await ledger.getLicenseId();
+        final nowStr = now.toIso8601String();
+
+        final ledgerEntries = <LedgerEntryInput>[];
+
+        for (final cartItem in items) {
+          final double baseQty;
+          if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
+            baseQty = cartItem.quantity * cartItem.wholesaleToRetailQty;
+          } else {
+            baseQty = cartItem.quantity * cartItem.conversionQty;
+          }
+          final cogs = cartItem.purchasePrice * baseQty;
+          if (cogs > 0) {
+            ledgerEntries.add(LedgerEntryInput(
+              accountType: 'cogs', direction: 'debit', amount: cogs,
+              quantityChange: -baseQty,
+            ));
+            ledgerEntries.add(LedgerEntryInput(
+              accountType: 'inventory', direction: 'credit', amount: cogs,
+              quantityChange: -baseQty,
+            ));
+          }
+        }
+
+        // DR Asset = totalAmount (cash/bank received)
+        // CR Income = totalAmount
+        ledgerEntries.addAll([
+          LedgerEntryInput(accountType: 'asset', direction: 'debit', amount: totalAmount),
+          LedgerEntryInput(accountType: 'income', direction: 'credit', amount: totalAmount),
+        ]);
+
+        // Adjust: if COGS entries are present, they are balanced within
+        // themselves (each item has paired cogs-debit + inventory-credit).
+
+        await ledger.recordTransaction(
+          executor: txn,
+          type: 'sale',
+          totalAmount: totalAmount,
+          tags: {
+            'bill_number': billNum,
+            'bill_id': billId,
+            'customer_name': customerName,
+            'payment_mode': effectivePaymentMode,
+            'discount_amount': discountAmount,
+          },
+          licenseId: licenseId,
+          createdAt: nowStr,
+          entries: ledgerEntries,
+        );
+      } catch (_) {
+        // Ledger write failure must NOT block the sale — re-throw so
+        // the transaction rolls back to keep data consistent.
+        rethrow;
+      }
+
       return Bill(id: billId, billNumber: billNum, billType: billType,  // FIX BUG#1
           items: billItems, totalAmount: totalAmount, totalProfit: totalProfit,
           discountAmount: discountAmount, gstTotal: gstTotal, cgstTotal: cgstAmount,

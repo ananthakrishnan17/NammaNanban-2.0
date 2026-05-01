@@ -13,6 +13,9 @@ import 'package:sqflite/sqflite.dart';
 ///             + erp_transactions (generic business-event log; replaces
 ///                                 bills + expenses + purchases)
 ///             + ledger_entries  (double-entry bookkeeping sub-ledger)
+///   v13     unit_role TEXT DEFAULT 'sale' on product_uoms
+///   v14     direction TEXT DEFAULT 'debit' on ledger_entries (explicit
+///            debit/credit for balance validation & Ledger Dashboard)
 ///
 /// All legacy tables are kept intact so existing devices continue to work
 /// during the migration period. They will be dropped in Phase 4 cutover.

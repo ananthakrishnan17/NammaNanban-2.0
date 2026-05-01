@@ -4,7 +4,6 @@ import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
 
-class Expense extends Equatable {
   final int? id;
   final String category;
   final String? description;
