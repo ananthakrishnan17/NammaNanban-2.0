@@ -283,7 +283,9 @@ class BillingRepositoryImpl implements BillingRepository {
           'created_at': bill.createdAt.toIso8601String(),
         },
       ).then((_) => debugPrint('[saveBill] sync queued'))
-       .catchError((Object e) => debugPrint('[saveBill] sync enqueue failed (non-fatal): $e')),
+       .catchError((Object e) {
+         debugPrint('[saveBill] sync enqueue failed (non-fatal): $e');
+       }),
     );
 
     debugPrint('[saveBill] completed: bill #${bill.billNumber}');
