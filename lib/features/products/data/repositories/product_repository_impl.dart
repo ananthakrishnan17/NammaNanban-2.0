@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
 import '../../domain/entities/product.dart';
@@ -97,8 +98,10 @@ class ProductRepositoryImpl implements ProductRepository {
             ),
           ],
         );
-      } catch (_) {
-        // Ledger failure must not block product creation
+      } catch (e, st) {
+        // Ledger failure must not block product creation.
+        // Log for audit purposes.
+        debugPrint('[LedgerService] opening stock ledger write failed: $e\n$st');
       }
     }
 
@@ -182,8 +185,10 @@ class ProductRepositoryImpl implements ProductRepository {
           createdAt: nowStr,
           entries: entries,
         );
-      } catch (_) {
-        // Ledger failure must not block stock update
+      } catch (e, st) {
+        // Ledger failure must not block stock update.
+        // Log for audit purposes.
+        debugPrint('[LedgerService] stock adjustment ledger write failed: $e\n$st');
       }
     }
 

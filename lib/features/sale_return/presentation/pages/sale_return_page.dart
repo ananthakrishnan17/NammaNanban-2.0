@@ -217,8 +217,10 @@ class SaleReturnRepository {
         createdAt: nowStr,
         entries: ledgerEntries,
       );
-    } catch (_) {
-      // Don't block the return — stock and DB are already updated above
+    } catch (e, st) {
+      // Don't block the return — stock and DB are already updated above.
+      // Log for audit purposes.
+      debugPrint('[LedgerService] sale_return ledger write failed: $e\n$st');
     }
 
     return saleReturn;
