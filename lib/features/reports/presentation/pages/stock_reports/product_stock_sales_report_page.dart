@@ -18,8 +18,10 @@ class ProductStockSalesReportPage extends StatefulWidget {
 }
 
 class _ProductStockSalesReportPageState
-    extends State<ProductStockSalesReportPage> {
+    extends State<ProductStockSalesReportPage>
+    with SingleTickerProviderStateMixin {
   late final ReportRepository _repo;
+  late final TabController _tabController;
 
   DateTime _from = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _to = DateTime.now();
@@ -30,6 +32,7 @@ class _ProductStockSalesReportPageState
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _products = [];
   List<Map<String, dynamic>> _rows = [];
+  List<Map<String, dynamic>> _recipeRows = [];
 
   bool _isLoading = false;
   String? _error;
@@ -37,9 +40,16 @@ class _ProductStockSalesReportPageState
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _repo = ReportRepository(DatabaseHelper.instance);
     _loadDropdowns();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadDropdowns() async {
@@ -52,9 +62,7 @@ class _ProductStockSalesReportPageState
           _products = products;
         });
       }
-    } catch (_) {
-      // Dropdown loading failure is non-fatal; filters will be empty
-    }
+    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -69,7 +77,11 @@ class _ProductStockSalesReportPageState
         productId: _selectedProductId,
         categoryId: _selectedCategoryId,
       );
-      setState(() => _rows = data);
+      final recipes = await _repo.getTheoreticalYieldReport();
+      setState(() {
+        _rows = data;
+        _recipeRows = recipes;
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -101,14 +113,8 @@ class _ProductStockSalesReportPageState
     await PdfExportHelper.exportAndShare(
       title: 'Product Stock & Sales Report',
       headers: [
-        'Product',
-        'Category',
-        'Purchased Qty',
-        'Purchase Value',
-        'WS Sold',
-        'Retail Sold',
-        'Sales Value',
-        'Balance'
+        'Product', 'Category', 'Purchased Qty', 'Purchase Value',
+        'WS Sold', 'Retail Sold', 'Sales Value', 'Balance'
       ],
       rows: _rows.map((d) {
         final wsToRetail = (d['wholesale_to_retail_qty'] as num).toDouble();
@@ -126,8 +132,7 @@ class _ProductStockSalesReportPageState
           d['name']?.toString() ?? '',
           d['category_name']?.toString() ?? '',
           (d['total_purchased_qty'] as num).toStringAsFixed(2),
-          CurrencyFormatter.format(
-              (d['total_purchase_value'] as num).toDouble()),
+          CurrencyFormatter.format((d['total_purchase_value'] as num).toDouble()),
           (d['total_wholesale_sold_qty'] as num).toStringAsFixed(2),
           (d['total_retail_sold_qty'] as num).toStringAsFixed(2),
           CurrencyFormatter.format(salesVal),
@@ -154,169 +159,161 @@ class _ProductStockSalesReportPageState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stock & Sales Report'),
+        title: const Text('Inventory Dashboard'),
         actions: [
           if (_rows.isNotEmpty)
-            IconButton(
-                icon: const Icon(Icons.picture_as_pdf), onPressed: _export),
+            IconButton(icon: const Icon(Icons.picture_as_pdf), onPressed: _export),
         ],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.inventory_2_outlined), text: 'Physical Stock'),
+            Tab(icon: Icon(Icons.science_outlined), text: 'Yield Forecast'),
+          ],
+          labelStyle: TextStyle(fontSize: 12.sp, fontFamily: 'Poppins', fontWeight: FontWeight.w600),
+          indicatorColor: AppTheme.primary,
+          labelColor: AppTheme.primary,
+          unselectedLabelColor: AppTheme.textSecondary,
+        ),
       ),
-      body: Column(
+      body: TabBarView(
+        controller: _tabController,
         children: [
-          // ── Filter Section ─────────────────────────────────────────────────
-          Container(
-            color: Colors.white,
-            padding: EdgeInsets.all(16.w),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          // ── Tab 1: Physical Raw Stock ───────────────────────────────────
+          Column(children: [
+            Container(
+              color: Colors.white,
+              padding: EdgeInsets.all(16.w),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 DateRangeFilter(
                   from: _from,
                   to: _to,
-                  onChanged: (f, t) => setState(() {
-                    _from = f;
-                    _to = t;
-                  }),
+                  onChanged: (f, t) => setState(() { _from = f; _to = t; }),
                 ),
                 SizedBox(height: 12.h),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _DropdownField<int?>(
-                        label: 'Category',
-                        value: _selectedCategoryId,
-                        items: [
-                          DropdownMenuItem<int?>(
-                              value: null,
-                              child: const Text('All Categories')),
-                          ..._categories.map((c) => DropdownMenuItem<int?>(
-                                value: c['id'] as int,
-                                child: Text(c['name']?.toString() ?? ''),
-                              )),
-                        ],
-                        onChanged: (v) => setState(() {
-                          _selectedCategoryId = v;
-                        }),
-                      ),
-                    ),
-                    SizedBox(width: 8.w),
-                    Expanded(
-                      child: _DropdownField<int?>(
-                        label: 'Product',
-                        value: _selectedProductId,
-                        items: [
-                          DropdownMenuItem<int?>(
-                              value: null,
-                              child: const Text('All Products')),
-                          ..._products.map((p) => DropdownMenuItem<int?>(
-                                value: p['id'] as int,
-                                child: Text(p['name']?.toString() ?? ''),
-                              )),
-                        ],
-                        onChanged: (v) => setState(() {
-                          _selectedProductId = v;
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
+                Row(children: [
+                  Expanded(child: _DropdownField<int?>(
+                    label: 'Category',
+                    value: _selectedCategoryId,
+                    items: [
+                      const DropdownMenuItem<int?>(value: null, child: Text('All Categories')),
+                      ..._categories.map((c) => DropdownMenuItem<int?>(
+                            value: c['id'] as int,
+                            child: Text(c['name']?.toString() ?? ''),
+                          )),
+                    ],
+                    onChanged: (v) => setState(() => _selectedCategoryId = v),
+                  )),
+                  SizedBox(width: 8.w),
+                  Expanded(child: _DropdownField<int?>(
+                    label: 'Product',
+                    value: _selectedProductId,
+                    items: [
+                      const DropdownMenuItem<int?>(value: null, child: Text('All Products')),
+                      ..._products.map((p) => DropdownMenuItem<int?>(
+                            value: p['id'] as int,
+                            child: Text(p['name']?.toString() ?? ''),
+                          )),
+                    ],
+                    onChanged: (v) => setState(() => _selectedProductId = v),
+                  )),
+                ]),
                 SizedBox(height: 12.h),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _load,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10.r)),
-                          padding: EdgeInsets.symmetric(vertical: 10.h),
-                        ),
-                        child: Text('Apply',
-                            style: TextStyle(
-                                fontSize: 13.sp, fontFamily: 'Poppins')),
-                      ),
+                Row(children: [
+                  Expanded(child: ElevatedButton(
+                    onPressed: _load,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary, foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
                     ),
-                    SizedBox(width: 8.w),
-                    OutlinedButton(
-                      onPressed: _clearFilters,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.textSecondary,
-                        side: BorderSide(color: AppTheme.divider),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10.r)),
-                        padding: EdgeInsets.symmetric(
-                            vertical: 10.h, horizontal: 16.w),
-                      ),
-                      child: Text('Clear',
-                          style: TextStyle(
-                              fontSize: 13.sp, fontFamily: 'Poppins')),
+                    child: Text('Apply', style: TextStyle(fontSize: 13.sp, fontFamily: 'Poppins')),
+                  )),
+                  SizedBox(width: 8.w),
+                  OutlinedButton(
+                    onPressed: _clearFilters,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.textSecondary,
+                      side: BorderSide(color: AppTheme.divider),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+                      padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 16.w),
                     ),
-                  ],
-                ),
-              ],
+                    child: Text('Clear', style: TextStyle(fontSize: 13.sp, fontFamily: 'Poppins')),
+                  ),
+                ]),
+              ]),
             ),
-          ),
-          // ── Content ────────────────────────────────────────────────────────
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(child: Text('Error: $_error'))
-                    : _rows.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text('📊',
-                                    style: TextStyle(fontSize: 48.sp)),
-                                SizedBox(height: 12.h),
-                                Text('No products found',
-                                    style: AppTheme.heading3),
-                              ],
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            child: Column(
-                              children: [
-                                // Summary cards
-                                Padding(
-                                  padding: EdgeInsets.all(16.w),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: _sCard(
-                                          'Total Purchase Value',
-                                          CurrencyFormatter.format(
-                                              totalPurchaseValue),
-                                          AppTheme.primary,
-                                          '💰',
-                                        ),
-                                      ),
-                                      SizedBox(width: 10.w),
-                                      Expanded(
-                                        child: _sCard(
-                                          'Total Sales Value',
-                                          CurrencyFormatter.format(
-                                              totalSalesValue),
-                                          AppTheme.accent,
-                                          '💵',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                // Product rows
-                                ..._rows.map(
-                                    (row) => _ProductStockCard(data: row)),
-                                SizedBox(height: 16.h),
-                              ],
-                            ),
-                          ),
-          ),
+            Expanded(child: _buildPhysicalTab(totalPurchaseValue, totalSalesValue)),
+          ]),
+
+          // ── Tab 2: Theoretical Yield ────────────────────────────────────
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _buildYieldTab(),
         ],
       ),
+    );
+  }
+
+  Widget _buildPhysicalTab(double totalPurchaseValue, double totalSalesValue) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return Center(child: Text('Error: $_error'));
+    if (_rows.isEmpty) {
+      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text('📊', style: TextStyle(fontSize: 48.sp)),
+        SizedBox(height: 12.h),
+        Text('No products found', style: AppTheme.heading3),
+      ]));
+    }
+    return SingleChildScrollView(child: Column(children: [
+      Padding(
+        padding: EdgeInsets.all(16.w),
+        child: Row(children: [
+          Expanded(child: _sCard('Total Purchase Value',
+              CurrencyFormatter.format(totalPurchaseValue), AppTheme.primary, '💰')),
+          SizedBox(width: 10.w),
+          Expanded(child: _sCard('Total Sales Value',
+              CurrencyFormatter.format(totalSalesValue), AppTheme.accent, '💵')),
+        ]),
+      ),
+      ..._rows.map((row) => _ProductStockCard(data: row)),
+      SizedBox(height: 16.h),
+    ]));
+  }
+
+  Widget _buildYieldTab() {
+    if (_recipeRows.isEmpty) {
+      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text('🍳', style: TextStyle(fontSize: 48.sp)),
+        SizedBox(height: 12.h),
+        Text('No recipe products found', style: AppTheme.heading3),
+        SizedBox(height: 8.h),
+        Text('Add composite_recipe products with BOM ingredients\nto see theoretical yield here.',
+            style: AppTheme.caption, textAlign: TextAlign.center),
+      ]));
+    }
+    return ListView(
+      padding: EdgeInsets.all(16.w),
+      children: [
+        Container(
+          padding: EdgeInsets.all(12.w),
+          margin: EdgeInsets.only(bottom: 16.h),
+          decoration: BoxDecoration(
+            color: AppTheme.primary.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(12.r),
+          ),
+          child: Row(children: [
+            const Icon(Icons.info_outline, color: AppTheme.primary, size: 16),
+            SizedBox(width: 8.w),
+            Expanded(child: Text(
+              'Theoretical yield = max units of each recipe you can make from current stock.',
+              style: AppTheme.caption,
+            )),
+          ]),
+        ),
+        ..._recipeRows.map((r) => _YieldCard(data: r)),
+        SizedBox(height: 16.h),
+      ],
     );
   }
 
@@ -332,20 +329,13 @@ class _ProductStockSalesReportPageState
           Row(children: [
             Text(emoji, style: TextStyle(fontSize: 16.sp)),
             const Spacer(),
-            Container(
-                width: 8.w,
-                height: 8.h,
-                decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle)),
+            Container(width: 8.w, height: 8.h,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           ]),
           SizedBox(height: 4.h),
           Text(label, style: AppTheme.caption),
-          Text(value,
-              style: TextStyle(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.w700,
-                  color: color,
-                  fontFamily: 'Poppins')),
+          Text(value, style: TextStyle(
+              fontSize: 14.sp, fontWeight: FontWeight.w700, color: color, fontFamily: 'Poppins')),
         ]),
       );
 }
@@ -539,4 +529,90 @@ class _DropdownField<T> extends StatelessWidget {
       onChanged: onChanged,
     );
   }
+}
+
+// ─── Yield Card ──────────────────────────────────────────────────────────────
+class _YieldCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _YieldCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = data['name']?.toString() ?? 'Unknown';
+    final maxYield = (data['max_yield'] as num?)?.toDouble() ?? 0;
+    final unit = data['unit']?.toString() ?? 'pcs';
+    final limitingIngredient = data['limiting_ingredient'] as String?;
+    final bomCost = (data['bom_cost'] as num?)?.toDouble() ?? 0;
+    final sellingPrice = (data['selling_price'] as num?)?.toDouble() ?? 0;
+    final isLimiting = maxYield == 0;
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 10.h),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(
+          color: isLimiting ? AppTheme.danger.withOpacity(0.5) : AppTheme.divider,
+          width: isLimiting ? 1.5 : 1,
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(14.w),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text(name, style: AppTheme.heading3)),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+              decoration: BoxDecoration(
+                color: isLimiting
+                    ? AppTheme.danger.withOpacity(0.1)
+                    : AppTheme.accent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+              child: Text(
+                '${maxYield.toStringAsFixed(0)} $unit',
+                style: AppTheme.body.copyWith(
+                  color: isLimiting ? AppTheme.danger : AppTheme.accent,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ]),
+          if (limitingIngredient != null) ...[
+            SizedBox(height: 6.h),
+            Row(children: [
+              Icon(Icons.warning_amber_rounded, size: 14.sp, color: AppTheme.warning),
+              SizedBox(width: 4.w),
+              Expanded(child: Text(
+                'Limiting ingredient: $limitingIngredient',
+                style: AppTheme.caption.copyWith(color: AppTheme.warning, fontWeight: FontWeight.w600),
+              )),
+            ]),
+          ],
+          if (bomCost > 0 || sellingPrice > 0) ...[
+            SizedBox(height: 8.h),
+            Divider(height: 1, color: AppTheme.divider),
+            SizedBox(height: 8.h),
+            Row(children: [
+              _chip('BOM Cost', '₹${bomCost.toStringAsFixed(2)}', AppTheme.textSecondary),
+              SizedBox(width: 8.w),
+              _chip('Sell Price', '₹${sellingPrice.toStringAsFixed(2)}', AppTheme.primary),
+              if (sellingPrice > bomCost) ...[
+                SizedBox(width: 8.w),
+                _chip('Margin', '₹${(sellingPrice - bomCost).toStringAsFixed(2)}', AppTheme.accent),
+              ],
+            ]),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _chip(String label, String value, Color color) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: AppTheme.caption),
+      Text(value, style: AppTheme.body.copyWith(color: color, fontWeight: FontWeight.w600)),
+    ],
+  );
 }

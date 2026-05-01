@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import 'bom_ingredient.dart';
+
 class Product extends Equatable {
   final int? id;
   final String name;
@@ -28,6 +30,9 @@ class Product extends Equatable {
   final String retailUnit;
   final double wholesaleToRetailQty;
   final double retailPrice;
+  // Phase 3 (v12)
+  final String itemType;   // 'physical' | 'composite_recipe'
+  final String attributes; // JSON string, e.g. {"bom": [...]}
 
   const Product({
     this.id, required this.name, this.categoryId, this.categoryName,
@@ -39,6 +44,7 @@ class Product extends Equatable {
     required this.createdAt, required this.updatedAt,
     this.wholesaleUnit = 'bag', this.retailUnit = 'kg',
     this.wholesaleToRetailQty = 1.0, this.retailPrice = 0.0,
+    this.itemType = 'physical', this.attributes = '{}',
   });
 
   bool get isLowStock => stockQuantity > 0 && stockQuantity <= lowStockThreshold;
@@ -48,6 +54,14 @@ class Product extends Equatable {
   bool get isOpenRate => rateType == 'open';
   bool get hasGst => gstRate > 0;
   String get displayUnit => uomShortName ?? unit;
+  bool get isCompositeRecipe => itemType == 'composite_recipe';
+
+  /// BOM ingredients decoded from the attributes JSON.
+  List<BomIngredient> get bomIngredients => BomIngredient.listFromJson(attributes);
+
+  /// Computed purchase cost from BOM (sum of ingredient costs).
+  double get bomCost =>
+      bomIngredients.fold(0.0, (s, i) => s + i.totalCost);
 
   Product copyWith({
     int? id, String? name, int? categoryId, String? categoryName,
@@ -59,6 +73,7 @@ class Product extends Equatable {
     DateTime? createdAt, DateTime? updatedAt,
     String? wholesaleUnit, String? retailUnit,
     double? wholesaleToRetailQty, double? retailPrice,
+    String? itemType, String? attributes,
   }) => Product(
     id: id ?? this.id, name: name ?? this.name,
     categoryId: categoryId ?? this.categoryId, categoryName: categoryName ?? this.categoryName,
@@ -77,6 +92,8 @@ class Product extends Equatable {
     retailUnit: retailUnit ?? this.retailUnit,
     wholesaleToRetailQty: wholesaleToRetailQty ?? this.wholesaleToRetailQty,
     retailPrice: retailPrice ?? this.retailPrice,
+    itemType: itemType ?? this.itemType,
+    attributes: attributes ?? this.attributes,
   );
 
   @override List<Object?> get props => [id, name, categoryId, brandId, purchasePrice, sellingPrice, stockQuantity];
@@ -91,6 +108,7 @@ class ProductModel extends Product {
     super.gstRate, super.gstInclusive, super.rateType, super.barcode, super.hsnCode,
     super.isActive, required super.createdAt, required super.updatedAt,
     super.wholesaleUnit, super.retailUnit, super.wholesaleToRetailQty, super.retailPrice,
+    super.itemType, super.attributes,
   });
 
   factory ProductModel.fromMap(Map<String, dynamic> m) => ProductModel(
@@ -114,6 +132,8 @@ class ProductModel extends Product {
     retailUnit: m['retail_unit'] as String? ?? 'kg',
     wholesaleToRetailQty: (m['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0,
     retailPrice: (m['retail_price'] as num?)?.toDouble() ?? 0.0,
+    itemType: m['item_type'] as String? ?? 'physical',
+    attributes: m['attributes'] as String? ?? '{}',
   );
 
   Map<String, dynamic> toMap() => {
@@ -128,6 +148,7 @@ class ProductModel extends Product {
     'created_at': createdAt.toIso8601String(), 'updated_at': updatedAt.toIso8601String(),
     'wholesale_unit': wholesaleUnit, 'retail_unit': retailUnit,
     'wholesale_to_retail_qty': wholesaleToRetailQty, 'retail_price': retailPrice,
+    'item_type': itemType, 'attributes': attributes,
   };
 }
 

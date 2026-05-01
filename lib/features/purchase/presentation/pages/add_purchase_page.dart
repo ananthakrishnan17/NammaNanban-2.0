@@ -7,6 +7,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
+import '../../../products/domain/entities/bom_ingredient.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../domain/entities/purchase.dart';
@@ -116,6 +117,15 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
                 else
                   ..._items.asMap().entries.map((e) => _itemTile(e.key, e.value)),
 
+                SizedBox(height: 12.h),
+                // Yield Forecast
+                BlocBuilder<ProductBloc, ProductState>(
+                  builder: (ctx, pState) {
+                    if (pState is! ProductsLoaded || _items.isEmpty) return const SizedBox();
+                    return _YieldForecastCard(
+                        purchasedItems: _items, allProducts: pState.products);
+                  },
+                ),
                 SizedBox(height: 12.h),
                 // Payment mode
                 _sectionLabel('Payment Mode'),
@@ -385,4 +395,128 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
       ]),
     );
   }
+}
+
+// ─── Yield Forecast Card ──────────────────────────────────────────────────────
+/// Shows which composite_recipe products can be made from the current purchase,
+/// given the existing stock and the items being purchased.
+class _YieldForecastCard extends StatelessWidget {
+  final List<PurchaseCartItem> purchasedItems;
+  final List<Product> allProducts;
+
+  const _YieldForecastCard({
+    required this.purchasedItems,
+    required this.allProducts,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Build a map: productId → available qty (existing stock + what's being purchased)
+    final available = <int, double>{};
+    for (final p in allProducts) {
+      if (p.id != null) available[p.id!] = p.stockQuantity;
+    }
+    for (final cart in purchasedItems) {
+      available[cart.productId] = (available[cart.productId] ?? 0) + cart.quantity;
+    }
+
+    // Compute yield for each composite_recipe product
+    final recipes = allProducts.where((p) => p.isCompositeRecipe).toList();
+    if (recipes.isEmpty) return const SizedBox();
+
+    final forecasts = <_RecipeForecast>[];
+    for (final recipe in recipes) {
+      final bom = recipe.bomIngredients;
+      if (bom.isEmpty) continue;
+
+      double maxYield = double.infinity;
+      String? limitingName;
+
+      for (final ing in bom) {
+        if (ing.productId == null) continue;
+        final avail = available[ing.productId!] ?? 0;
+        final possible = ing.quantity > 0 ? avail / ing.quantity : 0;
+        if (possible < maxYield) {
+          maxYield = possible;
+          limitingName = ing.productName;
+        }
+      }
+
+      if (maxYield == double.infinity) maxYield = 0;
+      forecasts.add(_RecipeForecast(
+        name: recipe.name,
+        maxYield: maxYield.floorToDouble(),
+        limitingIngredient: limitingName,
+        unit: recipe.unit,
+      ));
+    }
+
+    if (forecasts.isEmpty) return const SizedBox();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14.r),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: EdgeInsets.all(14.w),
+          child: Row(children: [
+            const Text('🔮', style: TextStyle(fontSize: 18)),
+            SizedBox(width: 8.w),
+            Text('Yield Forecast', style: AppTheme.heading3.copyWith(color: AppTheme.primary)),
+          ]),
+        ),
+        Divider(height: 1, color: AppTheme.divider),
+        ...forecasts.map((f) => Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(f.name, style: AppTheme.body.copyWith(fontWeight: FontWeight.w600)),
+              if (f.limitingIngredient != null)
+                Row(children: [
+                  Icon(Icons.warning_amber_rounded, size: 13.sp, color: AppTheme.warning),
+                  SizedBox(width: 4.w),
+                  Expanded(child: Text('Limited by: ${f.limitingIngredient}',
+                      style: AppTheme.caption.copyWith(color: AppTheme.warning),
+                      overflow: TextOverflow.ellipsis)),
+                ]),
+            ])),
+            SizedBox(width: 12.w),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+              decoration: BoxDecoration(
+                color: f.maxYield > 0
+                    ? AppTheme.accent.withOpacity(0.1)
+                    : AppTheme.danger.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+              child: Text(
+                '${f.maxYield.toStringAsFixed(0)} ${f.unit}',
+                style: AppTheme.body.copyWith(
+                  color: f.maxYield > 0 ? AppTheme.accent : AppTheme.danger,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ]),
+        )),
+        SizedBox(height: 4.h),
+      ]),
+    );
+  }
+}
+
+class _RecipeForecast {
+  final String name;
+  final double maxYield;
+  final String? limitingIngredient;
+  final String unit;
+  const _RecipeForecast({
+    required this.name,
+    required this.maxYield,
+    required this.limitingIngredient,
+    required this.unit,
+  });
 }

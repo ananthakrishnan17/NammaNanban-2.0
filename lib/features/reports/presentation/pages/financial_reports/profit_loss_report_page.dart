@@ -35,7 +35,8 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
   Future<void> _load() async {
     setState(() { _isLoading = true; _error = null; _pl = null; });
     try {
-      final data = await _repo.getProfitAndLoss(from: _from, to: _to);
+      // Phase 4: Try ledger-based P&L first; falls back to legacy if no entries
+      final data = await _repo.getProfitAndLossFromLedger(from: _from, to: _to);
       setState(() => _pl = data);
     } catch (e) {
       setState(() => _error = e.toString());
@@ -74,21 +75,26 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
 
   Future<void> _export() async {
     if (_pl == null) return;
+    final waste = (_pl!['waste'] as num?)?.toDouble() ?? 0.0;
+    final rows = [
+      ['Total Sales (Income)', CurrencyFormatter.format((_pl!['income'] as num?)?.toDouble() ?? 0.0)],
+      ['Less: Returns', CurrencyFormatter.format((_pl!['return_deductions'] as num?)?.toDouble() ?? 0.0)],
+      ['Net Sales', CurrencyFormatter.format((_pl!['net_sales'] as num?)?.toDouble() ?? 0.0)],
+      ['Cost of Goods Sold', CurrencyFormatter.format((_pl!['cogs'] as num?)?.toDouble() ?? 0.0)],
+      ['Gross Profit', CurrencyFormatter.format((_pl!['gross_profit'] as num?)?.toDouble() ?? 0.0)],
+      ['Operating Expenses', CurrencyFormatter.format((_pl!['expenses'] as num?)?.toDouble() ?? 0.0)],
+      if (waste > 0) ['Waste / Spoilage', CurrencyFormatter.format(waste)],
+      ['Net Profit / Loss', CurrencyFormatter.format((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0)],
+      ['Profit Margin', '${((_pl!['profit_margin'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1)}%'],
+    ];
     await PdfExportHelper.exportAndShare(
       title: 'Profit & Loss Statement',
       headers: ['Item', 'Amount'],
-      rows: [
-        ['Total Sales (Income)', CurrencyFormatter.format((_pl!['income'] as num?)?.toDouble() ?? 0.0)],
-        ['Less: Returns', CurrencyFormatter.format((_pl!['return_deductions'] as num?)?.toDouble() ?? 0.0)],
-        ['Net Sales', CurrencyFormatter.format((_pl!['net_sales'] as num?)?.toDouble() ?? 0.0)],
-        ['Cost of Goods Sold', CurrencyFormatter.format((_pl!['cogs'] as num?)?.toDouble() ?? 0.0)],
-        ['Gross Profit', CurrencyFormatter.format((_pl!['gross_profit'] as num?)?.toDouble() ?? 0.0)],
-        ['Operating Expenses', CurrencyFormatter.format((_pl!['expenses'] as num?)?.toDouble() ?? 0.0)],
-        ['Net Profit / Loss', CurrencyFormatter.format((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0)],
-        ['Profit Margin', '${((_pl!['profit_margin'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1)}%'],
-      ],
+      rows: rows,
     );
   }
+
+  bool get _isLedgerSource => _pl?['source'] == 'ledger';
 
   @override
   Widget build(BuildContext context) {
@@ -133,6 +139,23 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                       : SingleChildScrollView(
                           padding: EdgeInsets.all(16.w),
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            // Data source badge
+                            if (_isLedgerSource) ...[
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
+                                margin: EdgeInsets.only(bottom: 16.h),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primary.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8.r),
+                                ),
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(Icons.account_balance_outlined, size: 13.sp, color: AppTheme.primary),
+                                  SizedBox(width: 5.w),
+                                  Text('Sourced from ledger entries', style: AppTheme.caption.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w500)),
+                                ]),
+                              ),
+                            ],
+
                             _sectionHeader('INCOME'),
                             _plRow('Total Sales', (_pl!['income'] as num?)?.toDouble() ?? 0.0, color: AppTheme.accent),
                             _plRow('Less: Returns', (_pl!['return_deductions'] as num?)?.toDouble() ?? 0.0, deduct: true),
@@ -147,6 +170,34 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                             _sectionHeader('OPERATING EXPENSES'),
                             _plRow('Total Expenses', (_pl!['expenses'] as num?)?.toDouble() ?? 0.0, deduct: true),
                             SizedBox(height: 16.h),
+
+                            // Waste / Spoilage section — only shown when > 0
+                            if (((_pl!['waste'] as num?)?.toDouble() ?? 0) > 0) ...[
+                              _sectionHeader('WASTE / SPOILAGE'),
+                              _plRow(
+                                'Stock Write-offs',
+                                (_pl!['waste'] as num?)?.toDouble() ?? 0.0,
+                                deduct: true,
+                                color: AppTheme.warning,
+                              ),
+                              Container(
+                                margin: EdgeInsets.symmetric(vertical: 4.h),
+                                padding: EdgeInsets.symmetric(vertical: 6.h, horizontal: 12.w),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.warning.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8.r),
+                                ),
+                                child: Row(children: [
+                                  Icon(Icons.warning_amber_rounded, size: 14.sp, color: AppTheme.warning),
+                                  SizedBox(width: 6.w),
+                                  Expanded(child: Text(
+                                    'Waste reduces your gross margin',
+                                    style: AppTheme.caption.copyWith(color: AppTheme.warning),
+                                  )),
+                                ]),
+                              ),
+                              SizedBox(height: 16.h),
+                            ],
 
                             // Net Profit highlight
                             Container(
@@ -165,24 +216,22 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                               ),
                               child: Column(children: [
                                 Text(
-                                  ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0 ? '🎯 NET PROFIT' : '⚠️ NET LOSS',
+                                  ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
+                                      ? '🎯 NET PROFIT'
+                                      : '⚠️ NET LOSS',
                                   style: TextStyle(
-                                      fontSize: 12.sp,
-                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12.sp, fontWeight: FontWeight.w700,
                                       color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
-                                          ? AppTheme.accent
-                                          : AppTheme.danger,
+                                          ? AppTheme.accent : AppTheme.danger,
                                       fontFamily: 'Poppins'),
                                 ),
                                 SizedBox(height: 4.h),
                                 Text(
                                   CurrencyFormatter.format(((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0).abs()),
                                   style: TextStyle(
-                                      fontSize: 24.sp,
-                                      fontWeight: FontWeight.w700,
+                                      fontSize: 24.sp, fontWeight: FontWeight.w700,
                                       color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
-                                          ? AppTheme.accent
-                                          : AppTheme.danger,
+                                          ? AppTheme.accent : AppTheme.danger,
                                       fontFamily: 'Poppins'),
                                 ),
                                 SizedBox(height: 4.h),
@@ -190,8 +239,7 @@ class _ProfitLossReportPageState extends State<ProfitLossReportPage> {
                                   'Margin: ${((_pl!['profit_margin'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1)}%',
                                   style: AppTheme.caption.copyWith(
                                       color: ((_pl!['net_profit'] as num?)?.toDouble() ?? 0.0) >= 0
-                                          ? AppTheme.accent
-                                          : AppTheme.danger),
+                                          ? AppTheme.accent : AppTheme.danger),
                                 ),
                               ]),
                             ),

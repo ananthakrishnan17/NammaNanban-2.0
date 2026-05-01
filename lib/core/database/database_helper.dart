@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 /// Version history:
 ///   v1–v10  Legacy retail POS tables (bills, products, expenses, etc.)
 ///   v11     Phase 1 ERP Refactor:
+///   v12     Phase 3 UI Redesign:
 ///             + catalog_items   (replaces products long-term; supports
 ///                                physical / service / composite_recipe)
 ///             + item_uoms       (UOM conversion multipliers per item)
@@ -31,7 +32,7 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 11, // bumped from 10 → 11 for Phase 1 ERP tables
+      version: 12, // bumped from 11 → 12 for Phase 3: item_type + attributes on products
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -96,6 +97,7 @@ class DatabaseHelper {
       wholesale_unit TEXT DEFAULT 'bag', retail_unit TEXT DEFAULT 'kg',
       wholesale_to_retail_qty REAL DEFAULT 1.0, retail_price REAL DEFAULT 0.0,
       stock_wholesale_qty REAL DEFAULT 0.0, stock_retail_qty REAL DEFAULT 0.0,
+      item_type TEXT DEFAULT 'physical', attributes TEXT DEFAULT '{}',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       FOREIGN KEY (category_id) REFERENCES categories (id),
       FOREIGN KEY (brand_id)    REFERENCES brands (id),
@@ -503,6 +505,12 @@ class DatabaseHelper {
     // ── v11 — Phase 1 ERP tables ───────────────────────────────────────────
     if (oldVersion < 11) {
       await _createErpTables(db);
+    }
+
+    // ── v12 — Phase 3: item_type + attributes on products ─────────────────
+    if (oldVersion < 12) {
+      try { await db.execute("ALTER TABLE products ADD COLUMN item_type TEXT DEFAULT 'physical'"); } catch (_) {}
+      try { await db.execute("ALTER TABLE products ADD COLUMN attributes TEXT DEFAULT '{}'"); } catch (_) {}
     }
 
     await _seed(db, now);
