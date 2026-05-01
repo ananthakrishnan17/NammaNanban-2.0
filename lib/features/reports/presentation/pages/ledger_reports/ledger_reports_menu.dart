@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../../core/theme/app_theme.dart';
 import 'crm_points_report_page.dart';
 import 'customer_balance_report_page.dart';
+import 'ledger_dashboard_page.dart';
 import 'supplier_balance_report_page.dart';
 
 class LedgerReportsMenu extends StatelessWidget {
@@ -12,6 +13,8 @@ class LedgerReportsMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
+      ('📊', 'Ledger Dashboard', 'Sales, expenses, profit & transaction log',
+          const LedgerDashboardPage()),
       ('🏭', 'Supplier Balance & Statement', 'Supplier outstanding & purchase history',
           const SupplierBalanceReportPage()),
       ('👤', 'Customer Balance & Statement', 'Customer outstanding & bill history',

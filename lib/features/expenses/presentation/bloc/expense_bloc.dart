@@ -2,8 +2,9 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 
-class Expense extends Equatable {
+
   final int? id;
   final String category;
   final String? description;
@@ -95,7 +96,38 @@ class ExpenseRepositoryImpl implements ExpenseRepository {
   @override
   Future<int> addExpense(Expense expense) async {
     final db = await _dbHelper.database;
-    return await db.insert('expenses', expense.toMap());
+    final expenseId = await db.insert('expenses', expense.toMap());
+
+    // ── Double-entry ledger ──────────────────────────────────────────────
+    // Expense journal:
+    //   DR Expense   amount
+    //   CR Asset     amount (cash/bank paid out)
+    try {
+      final ledger = LedgerService.instance;
+      final licenseId = await ledger.getLicenseId();
+      final nowStr = expense.createdAt.toIso8601String();
+      await ledger.recordTransaction(
+        executor: db,
+        type: 'expense',
+        totalAmount: expense.amount,
+        tags: {
+          'expense_id': expenseId,
+          'category': expense.category,
+          'description': expense.description,
+          'is_raw_material': expense.isRawMaterial,
+        },
+        licenseId: licenseId,
+        createdAt: nowStr,
+        entries: [
+          LedgerEntryInput(accountType: 'expense', direction: 'debit', amount: expense.amount),
+          LedgerEntryInput(accountType: 'asset', direction: 'credit', amount: expense.amount),
+        ],
+      );
+    } catch (_) {
+      rethrow;
+    }
+
+    return expenseId;
   }
 
   @override
