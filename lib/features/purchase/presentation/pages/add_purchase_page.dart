@@ -10,7 +10,6 @@ import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
 import '../../../products/domain/entities/bom_ingredient.dart';
 import '../../../products/domain/entities/product.dart';
-import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
 import '../../domain/entities/purchase.dart';
 
@@ -307,10 +306,6 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
   Map<String, dynamic>? _selectedUom;
 
   Future<void> _loadPurchaseUoms(int productId) async {
-    final repo = ProductRepositoryImpl(DatabaseHelper.instance);
-    final all = await repo.getProductUoms(productId);
-    // Filter purchase UOMs only (unit_role = 'purchase')
-    final purchaseOnly = all.where((u) => (u.uomName.isNotEmpty)).toList();
     final db = await DatabaseHelper.instance.database;
     final rows = await db.rawQuery(
         "SELECT * FROM product_uoms WHERE product_id = ? AND unit_role = 'purchase'",

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 
+import '../database/database_helper.dart';
+
 /// Double-entry ledger writer.
 ///
 /// Every business event (sale, purchase, expense, return) creates one row in
@@ -172,10 +174,10 @@ class LedgerService {
 
   // ── Helpers for callers without a cached license ID ───────────────────────
   /// Returns the cached license ID, or 'local' as fallback.
-  static Future<String> resolveLicenseId(dynamic dbHelper) async {
+  static Future<String> resolveLicenseId(DatabaseHelper dbHelper) async {
     try {
-      final db = await dbHelper.database as dynamic;
-      final rows = await db.query('license_cache', limit: 1) as List;
+      final db = await dbHelper.database;
+      final rows = await db.query('license_cache', limit: 1);
       if (rows.isNotEmpty) return rows.first['id'] as String? ?? 'local';
     } catch (_) {}
     return 'local';

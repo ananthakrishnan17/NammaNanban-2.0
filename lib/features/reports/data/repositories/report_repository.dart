@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
+
 import '../../../../core/database/database_helper.dart';
 import '../../../billing/domain/entities/bill.dart';
 
@@ -1194,7 +1196,7 @@ class ReportRepository {
       'notes': notes,
       'closed_by': closedBy,
       'created_at': DateTime.now().toIso8601String(),
-    }, conflictAlgorithm: 5); // REPLACE
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Map<String, dynamic>>> getDayCloseHistory({int limit = 30}) async {

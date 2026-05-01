@@ -1274,19 +1274,19 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 320,
-      decoration: const BoxDecoration(
+      height: 320.h,
+      decoration: BoxDecoration(
         color: Colors.black,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
       ),
       child: Column(children: [
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(12.w),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Scan Barcode',
-                  style: TextStyle(color: Colors.white, fontSize: 16,
+              Text('Scan Barcode',
+                  style: TextStyle(color: Colors.white, fontSize: 16.sp,
                       fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
               IconButton(
                 icon: const Icon(Icons.close, color: Colors.white),
