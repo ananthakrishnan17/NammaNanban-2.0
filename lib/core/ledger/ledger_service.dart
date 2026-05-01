@@ -3,6 +3,23 @@ import 'package:sqflite/sqflite.dart';
 
 import '../database/database_helper.dart';
 
+/// Input descriptor for a single ledger line inside [LedgerService.recordTransaction].
+class LedgerEntryInput {
+  final String accountType;
+  final String direction; // 'debit' or 'credit'
+  final double amount;
+  final int? linkedCatalogItemId;
+  final double? quantityChange;
+
+  const LedgerEntryInput({
+    required this.accountType,
+    required this.direction,
+    required this.amount,
+    this.linkedCatalogItemId,
+    this.quantityChange,
+  });
+}
+
 /// Double-entry ledger writer.
 ///
 /// Every business event (sale, purchase, expense, return) creates one row in
@@ -16,6 +33,9 @@ import '../database/database_helper.dart';
 class LedgerService {
   static final LedgerService instance = LedgerService._();
   LedgerService._();
+
+  /// Floating-point tolerance for debit/credit balance validation.
+  static const double _balanceTolerance = 0.01;
 
   // ── Record a Sale ────────────────────────────────────────────────────────
   /// Creates an erp_transaction of type 'sale' and the corresponding
@@ -151,6 +171,68 @@ class LedgerService {
 
     await _insertEntry(txn, txId, 'asset',     'debit',  returnAmount, now);
     await _insertEntry(txn, txId, 'inventory', 'credit', returnAmount, now);
+    return txId;
+  }
+
+  // ── Generic transaction recorder ─────────────────────────────────────────
+  /// Inserts one row into [erp_transactions] and one row per [LedgerEntryInput]
+  /// into [ledger_entries].
+  ///
+  /// Throws [StateError] if the entries are not balanced
+  /// (total debit amount ≠ total credit amount, tolerance 0.01).
+  ///
+  /// [executor] may be a raw [Database] or an active sqflite [Transaction] so
+  /// the caller can compose this write inside a larger transaction.
+  Future<int> recordTransaction({
+    required DatabaseExecutor executor,
+    required String type,
+    required double totalAmount,
+    required String licenseId,
+    required List<LedgerEntryInput> entries,
+    Map<String, dynamic> tags = const {},
+    String? createdAt,
+  }) async {
+    for (final entry in entries) {
+      if (entry.direction != 'debit' && entry.direction != 'credit') {
+        throw ArgumentError(
+            "LedgerEntryInput.direction must be 'debit' or 'credit', "
+            "got '${entry.direction}'");
+      }
+    }
+    final totalDebit = entries
+        .where((e) => e.direction == 'debit')
+        .fold(0.0, (s, e) => s + e.amount);
+    final totalCredit = entries
+        .where((e) => e.direction == 'credit')
+        .fold(0.0, (s, e) => s + e.amount);
+    if ((totalDebit - totalCredit).abs() > _balanceTolerance) {
+      throw StateError(
+          'Ledger imbalance: debit=$totalDebit credit=$totalCredit');
+    }
+
+    final now = createdAt ?? DateTime.now().toIso8601String();
+    final txId = await executor.insert('erp_transactions', {
+      'license_id': licenseId,
+      'type': type,
+      'total_amount': totalAmount,
+      'tags': jsonEncode(tags),
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    for (final entry in entries) {
+      await executor.insert('ledger_entries', {
+        'transaction_id': txId,
+        'account_type': entry.accountType,
+        'direction': entry.direction,
+        'amount': entry.amount,
+        if (entry.linkedCatalogItemId != null)
+          'linked_catalog_item_id': entry.linkedCatalogItemId,
+        if (entry.quantityChange != null)
+          'quantity_change': entry.quantityChange,
+        'created_at': now,
+      });
+    }
     return txId;
   }
 

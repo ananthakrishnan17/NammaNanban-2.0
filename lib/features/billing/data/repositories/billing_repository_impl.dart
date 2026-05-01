@@ -242,26 +242,6 @@ class BillingRepositoryImpl implements BillingRepository {
           customerGstin: customerGstin, createdAt: now);
     });
 
-    // Write double-entry ledger (best-effort; never fails the sale)
-    try {
-      final db2 = await _dbHelper.database;
-      final licenseId = await LedgerService.resolveLicenseId(_dbHelper);
-      await db2.transaction((txn) async {
-        await LedgerService.instance.recordSale(
-          txn: txn,
-          totalAmount: bill.totalAmount,
-          totalCost: items.fold(0.0, (s, i) => s + i.purchasePrice * i.quantity * i.conversionQty),
-          licenseId: licenseId,
-          tags: {
-            'bill_number': bill.billNumber,
-            'bill_type': bill.billType,
-            'payment_mode': bill.paymentMode,
-            'customer_name': bill.customerName,
-          },
-        );
-      });
-    } catch (_) {}
-
     // Enqueue bill for cloud sync (no-op for offline licenses)
     await SyncService.instance.enqueue(
       tableName: 'bills_sync',
