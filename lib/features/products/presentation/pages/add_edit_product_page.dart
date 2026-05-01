@@ -60,7 +60,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _isActive = p?.isActive ?? true;
     _itemType = p?.itemType ?? 'physical';
     _bomIngredients = p?.bomIngredients ?? [];
-    _enableWholesale = p != null && (p.retailPrice > 0 || p.wholesaleToRetailQty > 1.0);
+    _enableWholesale = p != null && (p.retailPrice > 0 || p.wholesaleToRetailQty != 1.0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MastersBloc>().add(LoadAllMasters());
       if (isEditing && widget.product!.id != null) {
@@ -112,20 +112,29 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       itemType: _itemType,
       attributes: BomIngredient.listToAttributesJson(_bomIngredients),
     );
-    if (isEditing) {
-      context.read<ProductBloc>().add(UpdateProduct(p));
-      if (_pendingUoms.isNotEmpty) {
-        final uomRepo = ProductUomRepository(DatabaseHelper.instance);
-        uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
+    try {
+      if (isEditing) {
+        context.read<ProductBloc>().add(UpdateProduct(p));
+        if (_pendingUoms.isNotEmpty) {
+          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
+          uomRepo.saveAllUoms(widget.product!.id!, _pendingUoms);
+        }
+      } else {
+        // For new products: save product, get new ID, then save pending UOMs
+        final newId = await context.read<ProductBloc>().repository.addProduct(p);
+        if (_pendingUoms.isNotEmpty && newId > 0) {
+          final uomRepo = ProductUomRepository(DatabaseHelper.instance);
+          await uomRepo.saveAllUoms(newId, _pendingUoms);
+        }
+        if (mounted) context.read<ProductBloc>().add(LoadProducts());
       }
-    } else {
-      // For new products: save product, get new ID, then save pending UOMs
-      final newId = await context.read<ProductBloc>().repository.addProduct(p);
-      if (_pendingUoms.isNotEmpty) {
-        final uomRepo = ProductUomRepository(DatabaseHelper.instance);
-        await uomRepo.saveAllUoms(newId, _pendingUoms);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save product: $e'), backgroundColor: Colors.red),
+        );
+        return;
       }
-      context.read<ProductBloc>().add(LoadProducts());
     }
     if (mounted) Navigator.pop(context);
   }
@@ -306,7 +315,7 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
 
               // UOM — inline quick add via MastersBloc.repository for real id
               SearchableDropdownWithAdd<UomUnit>(
-                label: 'Base Unit *', hint: 'Select or create base unit (stock is tracked in this unit)', icon: Icons.straighten,
+                label: 'Base Unit *', hint: 'Select or create base unit', icon: Icons.straighten,
                 selectedValue: _selectedUom, items: units,
                 itemLabel: (u) => '${u.name} (${u.shortName})', itemId: (u) => u.id,
                 onChanged: (u) => setState(() => _selectedUom = u),
@@ -462,8 +471,8 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
                 final existingUoms = productState is ProductsLoaded
                     ? productState.productUoms
                     : const <ProductUom>[];
-                // Use 0 as placeholder productId for new products; saveAllUoms will set the real ID
-                final editorProductId = isEditing ? widget.product!.id! : 0;
+                // Use -1 as placeholder productId for new products; saveAllUoms sets the real ID
+                final editorProductId = isEditing ? widget.product!.id! : -1;
                 return MultiUomEditor(
                   key: ValueKey('uoms_${editorProductId}_${existingUoms.length}'),
                   productId: editorProductId,
