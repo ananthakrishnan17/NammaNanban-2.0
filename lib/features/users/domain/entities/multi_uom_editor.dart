@@ -249,7 +249,7 @@ class _MultiUomEditorState extends State<MultiUomEditor> {
                 isDense: true,
                 helperText: base.isNotEmpty ? '= ? $base' : null,
                 helperStyle: TextStyle(fontSize: 9.sp),
-                errorText: row.showConversionError ? '> 0' : null,
+                errorText: row.showConversionError ? 'Must be > 0' : null,
               ),
               onChanged: (v) {
                 final val = double.tryParse(v);

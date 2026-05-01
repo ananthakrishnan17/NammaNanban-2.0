@@ -99,7 +99,10 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
       barcode: _barcodeCtrl.text.isEmpty ? null : _barcodeCtrl.text,
       hsnCode: _hsnCtrl.text.isEmpty ? null : _hsnCtrl.text,
       isActive: _isActive, createdAt: widget.product?.createdAt ?? now, updatedAt: now,
-      // Legacy wholesale fields kept for backward compatibility
+      // Legacy wholesale fields kept for backward compatibility with existing
+      // data (v9 columns). These are not surfaced in the UI but must be
+      // preserved so existing bill and report queries continue to work.
+      // TODO(v14): evaluate removing once all devices migrate off v9 data.
       wholesaleUnit: widget.product?.wholesaleUnit ?? 'bag',
       retailUnit: widget.product?.retailUnit ?? 'kg',
       wholesaleToRetailQty: widget.product?.wholesaleToRetailQty ?? 1.0,

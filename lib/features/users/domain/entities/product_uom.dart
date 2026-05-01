@@ -145,12 +145,16 @@ class ProductUomRepository {
   /// leaving the other role's rows untouched.
   Future<void> saveAllUoms(int productId, List<ProductUom> uoms,
       [String unitRole = 'sale']) async {
+    // Guard against invalid role values
+    assert(unitRole == 'sale' || unitRole == 'purchase',
+        "unitRole must be 'sale' or 'purchase'");
+    final safeRole = (unitRole == 'purchase') ? 'purchase' : 'sale';
     final db = await _db.database;
     await db.delete('product_uoms',
-        where: 'product_id = ? AND unit_role = ?', whereArgs: [productId, unitRole]);
+        where: 'product_id = ? AND unit_role = ?', whereArgs: [productId, safeRole]);
     for (int i = 0; i < uoms.length; i++) {
       final row = uoms[i]
-          .copyWith(isDefault: i == 0, unitRole: unitRole)
+          .copyWith(isDefault: i == 0, unitRole: safeRole)
           .toMap()
         ..['product_id'] = productId;
       await db.insert('product_uoms', row);
