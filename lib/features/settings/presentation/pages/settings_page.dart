@@ -13,6 +13,7 @@ import '../../../auth/presentation/pages/set_pin_screen.dart';
 import '../../../backup/services/backup_service.dart';
 import '../../../day_close/day_close_page.dart';
 import '../../../masters/presentation/pages/masters_page.dart';
+import '../../../printer/presentation/pages/bill_template_settings_page.dart';
 import '../../../printer/presentation/pages/printer_settings_page.dart';
 import '../../../purchase/presentation/pages/add_purchase_page.dart';
 import '../../../purchase_return/purchase_return_page.dart';
@@ -142,8 +143,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
           // Printer
           _head('🖨️  ${lang.t("printer")}'),
-          _card([_tile(Icons.bluetooth, AppTheme.primary, 'Bluetooth Printer Setup', 'Connect & test thermal printer', null,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsPage())))]),
+          _card([
+            _tile(Icons.bluetooth, AppTheme.primary, 'Bluetooth Printer Setup', 'Connect & test thermal printer', null,
+                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsPage()))),
+            _div(),
+            _tile(Icons.receipt_long, const Color(0xFF7B1FA2), 'Bill Templates', 'Choose print template & paper size', null,
+                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BillTemplateSettingsPage()))),
+          ]),
           SizedBox(height: 16.h),
 
           // User Management (admin only)
