@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -467,6 +468,7 @@ class _PaymentBottomSheetState extends State<PaymentBottomSheet> {
                     onPressed: isSaving || (_isSplitMode && !_isSplitBalanced(cart.totalAmount))
                         ? null
                         : () {
+                      debugPrint('[PaymentBottomSheet] Confirm Payment pressed');
                       if (_isSplitMode) {
                         final splits = _splitEntries
                             .map((e) =>

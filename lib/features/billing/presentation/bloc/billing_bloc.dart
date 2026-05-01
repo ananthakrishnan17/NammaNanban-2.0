@@ -1,5 +1,6 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart';
 import '../../domain/entities/bill.dart';
 import '../../data/repositories/billing_repository_impl.dart';
 import '../../../masters/domain/entities/masters.dart';
@@ -256,6 +257,8 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
   Future<void> _onSave(SaveBill e, Emitter<CartState> emit) async {
     if (state.items.isEmpty) return;
 
+    debugPrint('[BillingBloc] confirm payment — SaveBill event, items: ${state.items.length}');
+
     // ✅ FIX 1: Set isSaving=true, clear any previous error
     emit(state.copyWith(isSaving: true, clearError: true));
 
@@ -272,6 +275,8 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
         customerGstin: state.selectedCustomer?.gstNumber,
       );
 
+      debugPrint('[BillingBloc] saveBill completed: bill #${bill.billNumber}');
+
       // ✅ FIX 2: Keep items in state so print has full bill data.
       //           Set isSaving=false AND set lastSavedBill so listener fires.
       //           Do NOT wipe cart here — ResetAfterSave does that later.
@@ -281,6 +286,7 @@ class BillingBloc extends Bloc<BillingEvent, CartState> {
         clearError: true,
       ));
     } catch (err) {
+      debugPrint('[BillingBloc] saveBill failed: $err');
       // ✅ FIX 3: Always reset isSaving on error
       emit(state.copyWith(
         isSaving: false,
