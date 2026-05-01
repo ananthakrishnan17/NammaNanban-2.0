@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../billing/domain/entities/bill.dart';
@@ -110,7 +111,7 @@ class SaleReturnRepository {
     final returnNumber = await _generateReturnNumber();
     final total = items.fold(0.0, (s, i) => s + i.totalPrice);
 
-    return await db.transaction((txn) async {
+    final saleReturn = await db.transaction((txn) async {
       final retId = await txn.insert('sale_returns', {
         'return_number': returnNumber,
         'original_bill_id': originalBillId,
@@ -162,7 +163,67 @@ class SaleReturnRepository {
         createdAt: now,
       );
     });
-  }
+
+    // ── Double-entry ledger (outside the save transaction but same DB) ───
+    // Sale Return journal:
+    //   DR Income       total   (reverse the revenue)
+    //   CR Asset        total   (refund cash/bank to customer)
+    //   DR Inventory    cogs    (restore stock, qty positive)
+    //   CR COGS         cogs    (reverse cost entry)
+    try {
+      final ledger = LedgerService.instance;
+      final licenseId = await ledger.getLicenseId();
+      final nowStr = now.toIso8601String();
+
+      final ledgerEntries = <LedgerEntryInput>[];
+      for (final item in items) {
+        // Approximate COGS: look up current purchase price from products table
+        final productRows = await db.query('products',
+            columns: ['purchase_price'],
+            where: 'id = ?', whereArgs: [item.productId]);
+        final purchasePrice = productRows.isNotEmpty
+            ? (productRows.first['purchase_price'] as num?)?.toDouble() ?? 0.0
+            : 0.0;
+        final cogs = purchasePrice * item.baseQtyToRestore;
+        if (cogs > 0) {
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'inventory', direction: 'debit',
+            amount: cogs, quantityChange: item.baseQtyToRestore,
+          ));
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'cogs', direction: 'credit',
+            amount: cogs, quantityChange: item.baseQtyToRestore,
+          ));
+        }
+      }
+      // DR Income = total (reverse revenue), CR Asset = total (cash refund)
+      ledgerEntries.addAll([
+        LedgerEntryInput(accountType: 'income', direction: 'debit', amount: total),
+        LedgerEntryInput(accountType: 'asset', direction: 'credit', amount: total),
+      ]);
+
+      await ledger.recordTransaction(
+        executor: db,
+        type: 'sale_return',
+        totalAmount: total,
+        tags: {
+          'return_number': returnNumber,
+          'original_bill_number': originalBillNumber,
+          'customer_name': customerName,
+          'refund_mode': refundMode,
+          'reason': reason,
+        },
+        licenseId: licenseId,
+        createdAt: nowStr,
+        entries: ledgerEntries,
+      );
+    } catch (e, st) {
+      // Don't block the return — stock and DB are already updated above.
+      // Log for audit purposes.
+      debugPrint('[LedgerService] sale_return ledger write failed: $e\n$st');
+    }
+
+    return saleReturn;
 
   // Original bill-ல இருந்து item details (conversion info உட்பட) fetch பண்ணு
   // "Fetch from Bill" button-க்கு இதை use பண்ணலாம்

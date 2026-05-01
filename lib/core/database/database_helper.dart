@@ -13,6 +13,9 @@ import 'package:sqflite/sqflite.dart';
 ///             + erp_transactions (generic business-event log; replaces
 ///                                 bills + expenses + purchases)
 ///             + ledger_entries  (double-entry bookkeeping sub-ledger)
+///   v13     unit_role TEXT DEFAULT 'sale' on product_uoms
+///   v14     direction TEXT DEFAULT 'debit' on ledger_entries (explicit
+///            debit/credit for balance validation & Ledger Dashboard)
 ///
 /// All legacy tables are kept intact so existing devices continue to work
 /// during the migration period. They will be dropped in Phase 4 cutover.
@@ -32,7 +35,7 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 13, // bumped from 12 → 13: unit_role on product_uoms for purchase/sale separation
+      version: 14, // bumped from 13 → 14: direction column on ledger_entries for proper double-entry
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -372,6 +375,7 @@ class DatabaseHelper {
                                    'income','cogs','expense',
                                    'inventory','asset','liability','waste'
                                  )),
+        direction              TEXT NOT NULL DEFAULT 'debit',
         amount                 REAL NOT NULL DEFAULT 0.0,
         linked_catalog_item_id INTEGER REFERENCES catalog_items (id) ON DELETE SET NULL,
         quantity_change        REAL,
@@ -518,6 +522,13 @@ class DatabaseHelper {
     // Existing rows keep DEFAULT 'sale' so billing is unaffected.
     if (oldVersion < 13) {
       try { await db.execute("ALTER TABLE product_uoms ADD COLUMN unit_role TEXT NOT NULL DEFAULT 'sale'"); } catch (_) {}
+    }
+
+    // ── v14 — Double-entry direction column on ledger_entries ──────────────
+    // 'debit' (default) or 'credit'. Required for balance validation in
+    // LedgerService and for the Ledger Dashboard balanced/mismatch indicator.
+    if (oldVersion < 14) {
+      try { await db.execute("ALTER TABLE ledger_entries ADD COLUMN direction TEXT NOT NULL DEFAULT 'debit'"); } catch (_) {}
     }
 
     await _seed(db, now);

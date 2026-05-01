@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import '../../../../core/database/database_helper.dart';
+import '../../../../core/ledger/ledger_service.dart';
 import '../../domain/entities/product.dart';
 import '../../../users/domain/entities/product_uom.dart';
 
@@ -63,7 +65,47 @@ class ProductRepositoryImpl implements ProductRepository {
 
   @override Future<int> addProduct(Product product) async {
     final db = await _dbHelper.database;
-    return await db.insert('products', (product as ProductModel).toMap());
+    final productId = await db.insert('products', (product as ProductModel).toMap());
+
+    // ── Opening stock ledger ─────────────────────────────────────────────
+    // Only create a ledger entry when the product is added with stock > 0.
+    // Normal add-product (no stock) does NOT create any ledger entries.
+    if (product.stockQuantity > 0) {
+      try {
+        final ledger = LedgerService.instance;
+        final licenseId = await ledger.getLicenseId();
+        final nowStr = DateTime.now().toIso8601String();
+        final inventoryValue = product.purchasePrice * product.stockQuantity;
+        await ledger.recordTransaction(
+          executor: db,
+          type: 'stock_adjustment',
+          totalAmount: inventoryValue,
+          tags: {
+            'product_id': productId,
+            'product_name': product.name,
+            'reason': 'opening_stock',
+          },
+          licenseId: licenseId,
+          createdAt: nowStr,
+          entries: [
+            LedgerEntryInput(
+              accountType: 'inventory', direction: 'debit',
+              amount: inventoryValue, quantityChange: product.stockQuantity,
+            ),
+            LedgerEntryInput(
+              accountType: 'liability', direction: 'credit',
+              amount: inventoryValue,
+            ),
+          ],
+        );
+      } catch (e, st) {
+        // Ledger failure must not block product creation.
+        // Log for audit purposes.
+        debugPrint('[LedgerService] opening stock ledger write failed: $e\n$st');
+      }
+    }
+
+    return productId;
   }
 
   @override Future<bool> updateProduct(Product product) async {
@@ -78,8 +120,79 @@ class ProductRepositoryImpl implements ProductRepository {
 
   @override Future<bool> updateStock(int productId, double quantityChange) async {
     final db = await _dbHelper.database;
-    return (await db.rawUpdate('UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
+    final updated = (await db.rawUpdate(
+        'UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
         [quantityChange, DateTime.now().toIso8601String(), productId])) > 0;
+
+    if (updated) {
+      // ── Stock adjustment ledger ────────────────────────────────────────
+      // Increase:  DR Inventory  / CR Asset (adjustment gain)
+      // Decrease:  DR Expense    / CR Inventory
+      try {
+        final ledger = LedgerService.instance;
+        final licenseId = await ledger.getLicenseId();
+        final nowStr = DateTime.now().toIso8601String();
+
+        // Look up product purchase price for inventory valuation
+        final productRows = await db.query('products',
+            columns: ['purchase_price', 'name'],
+            where: 'id = ?', whereArgs: [productId]);
+        final purchasePrice = productRows.isNotEmpty
+            ? (productRows.first['purchase_price'] as num?)?.toDouble() ?? 0.0
+            : 0.0;
+        final productName = productRows.isNotEmpty
+            ? productRows.first['name'] as String? ?? 'Product'
+            : 'Product';
+        final inventoryValue = purchasePrice * quantityChange.abs();
+
+        final List<LedgerEntryInput> entries;
+        if (quantityChange > 0) {
+          // Stock increase: DR Inventory / CR Asset (adjustment)
+          entries = [
+            LedgerEntryInput(
+              accountType: 'inventory', direction: 'debit',
+              amount: inventoryValue, quantityChange: quantityChange,
+            ),
+            LedgerEntryInput(
+              accountType: 'asset', direction: 'credit',
+              amount: inventoryValue,
+            ),
+          ];
+        } else {
+          // Stock decrease (write-down): DR Expense / CR Inventory
+          entries = [
+            LedgerEntryInput(
+              accountType: 'expense', direction: 'debit',
+              amount: inventoryValue,
+            ),
+            LedgerEntryInput(
+              accountType: 'inventory', direction: 'credit',
+              amount: inventoryValue, quantityChange: quantityChange,
+            ),
+          ];
+        }
+
+        await ledger.recordTransaction(
+          executor: db,
+          type: 'stock_adjustment',
+          totalAmount: inventoryValue,
+          tags: {
+            'product_id': productId,
+            'product_name': productName,
+            'quantity_change': quantityChange,
+          },
+          licenseId: licenseId,
+          createdAt: nowStr,
+          entries: entries,
+        );
+      } catch (e, st) {
+        // Ledger failure must not block stock update.
+        // Log for audit purposes.
+        debugPrint('[LedgerService] stock adjustment ledger write failed: $e\n$st');
+      }
+    }
+
+    return updated;
   }
 
   @override Future<List<Category>> getAllCategories() async {

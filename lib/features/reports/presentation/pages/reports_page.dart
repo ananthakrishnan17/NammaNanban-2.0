@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'bill_reports/bill_reports_menu.dart';
 import 'financial_reports/financial_reports_menu.dart';
+import 'ledger_reports/ledger_dashboard_page.dart';
 import 'ledger_reports/ledger_reports_menu.dart';
 import 'product_reports/product_reports_menu.dart';
 import 'purchase_reports/purchase_report_page.dart';
@@ -38,6 +39,14 @@ class ReportsPage extends StatelessWidget {
               childAspectRatio: 1.1,
               children: [
                 _HubCard(
+                  emoji: '📒',
+                  title: 'Ledger Dashboard',
+                  subtitle: 'Profit, stock & transactions',
+                  color: AppTheme.primary,
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const LedgerDashboardPage())),
+                ),
+                _HubCard(
                   emoji: '📋',
                   title: 'Bill Reports',
                   subtitle: '5 Reports',
@@ -65,7 +74,7 @@ class ReportsPage extends StatelessWidget {
                 _HubCard(
                   emoji: '👥',
                   title: 'Ledger Reports',
-                  subtitle: '3 Reports',
+                  subtitle: '4 Reports',
                   color: AppTheme.warning,
                   onTap: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const LedgerReportsMenu())),
