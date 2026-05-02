@@ -15,7 +15,12 @@ import '../../../../shared/widgets/searchable_dropdown_with_add.dart';
 
 class AddEditProductPage extends StatefulWidget {
   final Product? product;
-  const AddEditProductPage({super.key, this.product});
+
+  /// When provided, pre-fills the barcode field.  Used when navigating here
+  /// after a failed barcode scan so the user doesn't have to type the code.
+  final String? initialBarcode;
+
+  const AddEditProductPage({super.key, this.product, this.initialBarcode});
   @override State<AddEditProductPage> createState() => _AddEditProductPageState();
 }
 
@@ -47,7 +52,10 @@ class _AddEditProductPageState extends State<AddEditProductPage> {
     _wsCtrl = TextEditingController(text: p != null && p.wholesalePrice > 0 ? p.wholesalePrice.toStringAsFixed(2) : '');
     _stockCtrl = TextEditingController(text: p?.stockQuantity.toString() ?? '0');
     _lowStockCtrl = TextEditingController(text: p?.lowStockThreshold.toString() ?? '5');
-    _barcodeCtrl = TextEditingController(text: p?.barcode ?? '');
+    // initialBarcode takes priority for new products; existing product keeps
+    // its stored barcode when editing.
+    _barcodeCtrl = TextEditingController(
+        text: p?.barcode ?? widget.initialBarcode ?? '');
     _hsnCtrl = TextEditingController(text: p?.hsnCode ?? '');
     _gstRate = p?.gstRate ?? 0.0;
     _gstInclusive = p?.gstInclusive ?? true;

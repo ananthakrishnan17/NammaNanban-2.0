@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -12,6 +11,8 @@ import '../../../printer/services/printer_service.dart';
 import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
+import '../../../products/presentation/pages/add_edit_product_page.dart';
+import '../../../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../domain/entities/bill.dart';
 import '../../domain/entities/sale_type.dart';
 import '../bloc/billing_bloc.dart';
@@ -70,7 +71,7 @@ class _BillingScreenState extends State<BillingScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _BarcodeScannerSheet(),
+      builder: (_) => const BarcodeScannerSheet(),
     );
     if (barcode == null || barcode.isEmpty || !mounted) return;
 
@@ -79,13 +80,9 @@ class _BillingScreenState extends State<BillingScreen> {
     if (!mounted) return;
 
     if (product == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('No product found for barcode: $barcode'),
-        backgroundColor: AppTheme.danger,
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(bottom: 80.h, left: 16.w, right: 16.w),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
-      ));
+      // No product found — ask the user whether to create one.
+      // Pre-fill the barcode so the user doesn't have to retype it.
+      _showBarcodeNotFoundDialog(context, barcode);
       return;
     }
     if (product.isOutOfStock) { _showOutOfStockSnack(product.name); return; }
@@ -106,6 +103,53 @@ class _BillingScreenState extends State<BillingScreen> {
         ),
       );
     }
+  }
+
+  /// Shows a dialog when a scanned barcode does not match any product.
+  ///
+  /// The user can tap "Create Product" to navigate to [AddEditProductPage]
+  /// with the scanned barcode pre-filled, so they don't have to type it
+  /// manually.  After returning, [ProductBloc] already reloads the list, so
+  /// the newly created product is immediately available for billing.
+  void _showBarcodeNotFoundDialog(BuildContext context, String barcode) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Row(children: [
+          Text('🔍', style: TextStyle(fontSize: 22.sp)),
+          SizedBox(width: 8.w),
+          const Expanded(child: Text('Product Not Found')),
+        ]),
+        content: Text(
+          'No product matched barcode:\n$barcode\n\nWould you like to create a new product?',
+          style: AppTheme.body,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              // Navigate to AddEditProductPage with the barcode pre-filled.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BlocProvider.value(
+                    value: context.read<ProductBloc>(),
+                    child: AddEditProductPage(initialBarcode: barcode),
+                  ),
+                ),
+              );
+            },
+            child: const Text('Create Product'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Show sale type selection dialog for products with wholesaleToRetailQty > 1
@@ -1307,75 +1351,4 @@ class _BillingScreenState extends State<BillingScreen> {
       }
     });
   }
-}
-
-// ── Barcode Scanner Bottom Sheet ──────────────────────────────────────────────
-class _BarcodeScannerSheet extends StatefulWidget {
-  const _BarcodeScannerSheet();
-
-  @override
-  State<_BarcodeScannerSheet> createState() => _BarcodeScannerSheetState();
-}
-
-class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
-  late final MobileScannerController _controller;
-  bool _hasScanned = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = MobileScannerController();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 320.h,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-      ),
-      child: Column(children: [
-        Padding(
-          padding: EdgeInsets.all(12.w),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Scan Barcode',
-                  style: TextStyle(color: Colors.white, fontSize: 16.sp,
-                      fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_hasScanned) return;
-              final barcode = capture.barcodes.firstOrNull?.rawValue;
-              if (barcode != null && barcode.isNotEmpty) {
-                _hasScanned = true;
-                Navigator.pop(context, barcode);
-              }
-            },
-          ),
-        ),
-        const SizedBox(height: 16),
-        const Text('Point camera at a barcode',
-            style: TextStyle(color: Colors.white60, fontSize: 13)),
-        const SizedBox(height: 12),
-      ]),
-    );
-  }
-}
 }

@@ -6,11 +6,14 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
+import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/bom_ingredient.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
+import '../../../products/presentation/pages/add_edit_product_page.dart';
 import '../../domain/entities/purchase.dart';
 
 class AddPurchasePage extends StatefulWidget {
@@ -332,6 +335,90 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
     });
   }
 
+  /// Opens the shared [BarcodeScannerSheet] and handles the result:
+  /// - Found → automatically selects the product in the picker.
+  /// - Not found → shows a dialog offering to create a new product with the
+  ///   barcode pre-filled (navigates to [AddEditProductPage]).
+  Future<void> _scanBarcode(BuildContext context) async {
+    final barcode = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const BarcodeScannerSheet(),
+    );
+    if (barcode == null || barcode.isEmpty || !mounted) return;
+
+    // Look up the product by exact barcode match.
+    final repo = ProductRepositoryImpl(DatabaseHelper.instance);
+    final product = await repo.findByBarcode(barcode);
+    if (!mounted) return;
+
+    if (product == null) {
+      // No match — offer to create a new product with the barcode pre-filled.
+      _showBarcodeNotFoundDialog(context, barcode);
+      return;
+    }
+
+    // Product found — select it and load its purchase UOMs.
+    setState(() {
+      _selected = product;
+      _costCtrl.text = product.purchasePrice.toStringAsFixed(2);
+      _gstRate = product.gstRate;
+      _purchaseUoms = [];
+      _selectedUom = null;
+      _expiryDate = null;
+      _batchNumCtrl.clear();
+    });
+    _loadPurchaseUoms(product.id!);
+  }
+
+  /// Prompts the user to create a product when the scanned barcode is unknown.
+  void _showBarcodeNotFoundDialog(BuildContext context, String barcode) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Row(children: [
+          Text('🔍', style: TextStyle(fontSize: 22.sp)),
+          SizedBox(width: 8.w),
+          const Expanded(child: Text('Product Not Found')),
+        ]),
+        content: Text(
+          'No product matched barcode:\n$barcode\n\nWould you like to create a new product?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              // Navigate to AddEditProductPage with the barcode pre-filled.
+              // After returning, reload the product list so the new product
+              // is immediately available in the purchase picker.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BlocProvider.value(
+                    value: context.read<ProductBloc>(),
+                    child: AddEditProductPage(initialBarcode: barcode),
+                  ),
+                ),
+              ).then((_) {
+                if (mounted) {
+                  context.read<ProductBloc>().add(LoadProducts());
+                }
+              });
+            },
+            child: const Text('Create Product'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = widget.products.where((p) => p.name.toLowerCase().contains(_searchQ.toLowerCase())).toList();
@@ -345,10 +432,30 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
         SizedBox(height: 12.h),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16.w),
-          child: TextField(
-            onChanged: (v) => setState(() => _searchQ = v),
-            decoration: const InputDecoration(hintText: 'Search product...', prefixIcon: Icon(Icons.search)),
-          ),
+          child: Row(children: [
+            Expanded(child: TextField(
+              onChanged: (v) => setState(() => _searchQ = v),
+              decoration: const InputDecoration(hintText: 'Search product...', prefixIcon: Icon(Icons.search)),
+            )),
+            SizedBox(width: 8.w),
+            // ── Barcode scan button ──────────────────────────────────────────
+            // Tap to open the camera scanner.  If the product is found it is
+            // selected automatically; if not, the user is offered the option
+            // to create a new product with the barcode pre-filled.
+            GestureDetector(
+              onTap: () => _scanBarcode(context),
+              child: Container(
+                width: 44.w,
+                height: 44.h,
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(10.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Icon(Icons.qr_code_scanner, color: AppTheme.textSecondary, size: 22.sp),
+              ),
+            ),
+          ]),
         ),
         SizedBox(height: 8.h),
         Expanded(child: _selected == null
