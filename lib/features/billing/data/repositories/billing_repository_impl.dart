@@ -99,7 +99,18 @@ class BillingRepositoryImpl implements BillingRepository {
     final String licenseId = await LedgerService.resolveLicenseId(_dbHelper);
     debugPrint('[saveBill] licenseId resolved: $licenseId');
 
+    // ── ATOMIC TRANSACTION ────────────────────────────────────────────────
+    // All three steps below run inside a single SQLite transaction so that a
+    // failure in any one of them automatically rolls back the whole operation:
+    //   Step 1 — Insert bill row (+ split-payment rows)
+    //   Step 2 — Insert bill_item rows (+ ledger entries via LedgerService)
+    //   Step 3 — Deduct stock for every item sold
+    // No try/catch is used here intentionally — any exception propagates up,
+    // causing sqflite to roll back the transaction before it is committed.
     final bill = await db.transaction((txn) async {
+      // ── Step 1: Insert bill ────────────────────────────────────────────
+      // snapshot_json is populated after items are built (Step 2) and then
+      // updated atomically within the same transaction via rawUpdate below.
       final billId = await txn.insert('bills', {
         'bill_number': billNum, 'bill_type': billType,  // FIX BUG#1
         'customer_id': customerId, 'customer_name': customerName,
@@ -125,6 +136,7 @@ class BillingRepositoryImpl implements BillingRepository {
       }
 
       final billItems = <BillItem>[];
+      // ── Step 2: Insert bill items + deduct stock (Step 3) ─────────────
       for (final cartItem in items) {
         final effectivePrice = cartItem.effectivePrice(bt);
         final gstAmt = cartItem.gstAmountFor(bt);
@@ -142,7 +154,8 @@ class BillingRepositoryImpl implements BillingRepository {
         });
         debugPrint('[saveBill] item inserted: id=$itemId, product=${cartItem.productName}');
 
-        // Deduct stock — wholesale items deduct wholesaleToRetailQty per unit
+        // ── Step 3: Deduct stock ───────────────────────────────────────
+        // Wholesale items deduct wholesaleToRetailQty per unit (base UOM).
         final double baseQtyToDeduct;
         if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
           baseQtyToDeduct = cartItem.quantity * cartItem.wholesaleToRetailQty;
@@ -184,6 +197,44 @@ class BillingRepositoryImpl implements BillingRepository {
             gstRate: cartItem.gstRate, gstAmount: gstAmt, totalPrice: itemTotal));
       }
       debugPrint('[saveBill] items inserted: count=${billItems.length}');
+
+      // ── Snapshot: persist an immutable JSON copy of the bill ──────────
+      // This snapshot is stored in bills.snapshot_json inside the same
+      // transaction, so it is guaranteed to be present whenever the bill row
+      // exists.  It is used for receipt rendering without re-joining tables.
+      final snapshotMap = {
+        'bill_number': billNum,
+        'bill_type': billType,
+        'total_amount': totalAmount,
+        'total_profit': totalProfit,
+        'discount_amount': discountAmount,
+        'gst_total': gstTotal,
+        'cgst_total': cgstAmount,
+        'sgst_total': sgstAmount,
+        'igst_total': igstAmount,
+        'payment_mode': effectivePaymentMode,
+        'split_payment_summary': splitSummary,
+        'customer_name': customerName,
+        'customer_address': customerAddress,
+        'customer_gstin': customerGstin,
+        'created_at': nowStr,
+        'items': billItems.map((i) => {
+          'product_id': i.productId,
+          'product_name': i.productName,
+          'quantity': i.quantity,
+          'unit': i.unit,
+          'unit_price': i.unitPrice,
+          'purchase_price': i.purchasePrice,
+          'gst_rate': i.gstRate,
+          'gst_amount': i.gstAmount,
+          'total_price': i.totalPrice,
+        }).toList(),
+      };
+      await txn.rawUpdate(
+        'UPDATE bills SET snapshot_json = ? WHERE id = ?',
+        [jsonEncode(snapshotMap), billId],
+      );
+      debugPrint('[saveBill] snapshot saved for bill id=$billId');
 
       // ── Double-entry ledger ─────────────────────────────────────────────
       // Sale journal (single recordTransaction call — no duplicate writes):

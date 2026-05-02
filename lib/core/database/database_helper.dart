@@ -16,6 +16,9 @@ import 'package:sqflite/sqflite.dart';
 ///   v13     unit_role TEXT DEFAULT 'sale' on product_uoms
 ///   v14     direction TEXT DEFAULT 'debit' on ledger_entries (explicit
 ///            debit/credit for balance validation & Ledger Dashboard)
+///   v15     day_close + batches tables
+///   v16     updated_at on sync_queue for last-write-wins tracking
+///   v17     snapshot_json on bills (immutable JSON bill snapshot for rendering)
 ///
 /// All legacy tables are kept intact so existing devices continue to work
 /// during the migration period. They will be dropped in Phase 4 cutover.
@@ -35,9 +38,10 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 16, // v14: direction on ledger_entries + sale_return_items conversion cols
+      version: 17, // v14: direction on ledger_entries + sale_return_items conversion cols
                    // v15: day_close table for EOD settlement + batches table
                    // v16: updated_at on sync_queue for last-write-wins tracking
+                   // v17: snapshot_json on bills for immutable bill rendering snapshot
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -139,6 +143,7 @@ class DatabaseHelper {
       payment_mode TEXT DEFAULT 'cash', split_payment_summary TEXT,
       billed_by_user_id INTEGER, notes TEXT, status TEXT DEFAULT 'active',
       is_modified INTEGER DEFAULT 0, modification_note TEXT, created_at TEXT NOT NULL,
+      snapshot_json TEXT,
       FOREIGN KEY (customer_id) REFERENCES customers (id))''');
 
     await db.execute('''CREATE TABLE bill_payment_splits (
@@ -611,6 +616,11 @@ class DatabaseHelper {
     // ── v16 — updated_at on sync_queue for last-write-wins tracking ───────
     if (oldVersion < 16) {
       try { await db.execute('ALTER TABLE sync_queue ADD COLUMN updated_at TEXT'); } catch (_) {}
+    }
+
+    // ── v17 — snapshot_json on bills for immutable rendering snapshot ──────
+    if (oldVersion < 17) {
+      try { await db.execute('ALTER TABLE bills ADD COLUMN snapshot_json TEXT'); } catch (_) {}
     }
 
     await _seed(db, now);
