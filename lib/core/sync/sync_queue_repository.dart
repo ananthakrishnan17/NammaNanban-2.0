@@ -1,4 +1,6 @@
 
+import 'dart:convert';
+
 import '../database/database_helper.dart';
 import 'sync_queue.dart';
 import 'sync_status.dart';
@@ -15,15 +17,53 @@ class SyncQueueRepository {
     required Map<String, dynamic> payload,
   }) async {
     final db = await DatabaseHelper.instance.database;
-    final item = SyncQueueItem(
-      tableName: tableName,
-      recordId: recordId,
-      operation: operation,
-      payload: payload,
-      status: SyncStatus.pending,
-      createdAt: DateTime.now(),
-    );
-    await db.insert('sync_queue', item.toMap());
+    final now = DateTime.now().toIso8601String();
+
+    // Atomic check-and-upsert: wrap in a transaction so that two concurrent
+    // enqueue calls for the same record cannot both pass the duplicate check
+    // and insert separate rows.
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'sync_queue',
+        where: 'table_name = ? AND record_id = ? AND (status = ? OR status = ?)',
+        whereArgs: [
+          tableName,
+          recordId,
+          SyncStatus.pending.value,
+          SyncStatus.failed.value,
+        ],
+        limit: 1,
+      );
+
+      if (existing.isNotEmpty) {
+        // Update payload + reset to pending so the latest data is synced.
+        await txn.update(
+          'sync_queue',
+          {
+            'payload': jsonEncode(payload),
+            'operation': operation.value,
+            'status': SyncStatus.pending.value,
+            'retry_count': 0,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [existing.first['id']],
+        );
+      } else {
+        final item = SyncQueueItem(
+          tableName: tableName,
+          recordId: recordId,
+          operation: operation,
+          payload: payload,
+          status: SyncStatus.pending,
+          createdAt: DateTime.now(),
+        );
+        await txn.insert('sync_queue', {
+          ...item.toMap(),
+          'updated_at': now,
+        });
+      }
+    });
   }
 
   Future<List<SyncQueueItem>> getPending() async {
@@ -45,6 +85,8 @@ class SyncQueueRepository {
       {
         'status': status.value,
         if (retryCount != null) 'retry_count': retryCount,
+        // Stamp the time so last-write-wins comparisons are accurate
+        'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: [id],

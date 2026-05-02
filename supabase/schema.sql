@@ -376,3 +376,52 @@ CREATE POLICY "anon_all_catalog_items"  ON catalog_items  FOR ALL TO anon USING 
 CREATE POLICY "anon_all_item_uoms"      ON item_uoms      FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "anon_all_transactions"   ON transactions   FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "anon_all_ledger_entries" ON ledger_entries FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- =============================================================
+-- MIGRATION v12 — Sync improvements (last-write-wins + device tracing)
+-- =============================================================
+-- ⚠️  MANUAL EXECUTION REQUIRED in Supabase SQL Editor.
+--    Run this BEFORE deploying the app build that includes these changes.
+--
+-- WHY these changes are needed:
+--
+-- 1. bills_sync / expenses_sync / purchases_sync are missing `device_id` and
+--    `updated_at` columns.  The app now stamps both on every sync payload so
+--    Supabase can resolve conflicts (last-write-wins by updated_at) and trace
+--    which device originated the write.
+--
+-- 2. products_sync already has `updated_at` but is missing `device_id`.
+--
+-- 3. The Supabase `ledger_entries` table is missing the `direction` column
+--    that was added to the local SQLite schema in app v14. Without it, any
+--    future sync of ledger_entries to Supabase will fail.
+-- =============================================================
+
+-- ── bills_sync ────────────────────────────────────────────────────────────
+ALTER TABLE bills_sync
+  ADD COLUMN IF NOT EXISTS device_id   TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- ── expenses_sync ─────────────────────────────────────────────────────────
+ALTER TABLE expenses_sync
+  ADD COLUMN IF NOT EXISTS device_id   TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- ── purchases_sync ────────────────────────────────────────────────────────
+ALTER TABLE purchases_sync
+  ADD COLUMN IF NOT EXISTS device_id   TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- ── products_sync — device_id only (updated_at already exists) ────────────
+ALTER TABLE products_sync
+  ADD COLUMN IF NOT EXISTS device_id   TEXT;
+
+-- ── ledger_entries — add direction column (parity with SQLite v14) ────────
+-- direction TEXT: 'debit' | 'credit' — explicit bookkeeping direction.
+-- DEFAULT 'debit' is intentional to keep existing rows valid after the
+-- migration, but the application layer always passes direction explicitly;
+-- the default is never relied on for new inserts.
+-- Safe to apply even if already present (IF NOT EXISTS on ALTER TABLE).
+ALTER TABLE ledger_entries
+  ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'debit'
+    CHECK (direction IN ('debit', 'credit'));

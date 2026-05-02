@@ -35,8 +35,9 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 15, // v14: direction on ledger_entries + sale_return_items conversion cols
+      version: 16, // v14: direction on ledger_entries + sale_return_items conversion cols
                    // v15: day_close table for EOD settlement + batches table
+                   // v16: updated_at on sync_queue for last-write-wins tracking
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -234,7 +235,7 @@ class DatabaseHelper {
       table_name TEXT NOT NULL, record_id TEXT NOT NULL,
       operation TEXT NOT NULL DEFAULT 'create', payload TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
-      retry_count INTEGER DEFAULT 0)''');
+      retry_count INTEGER DEFAULT 0, updated_at TEXT)''');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -537,7 +538,8 @@ class DatabaseHelper {
           id INTEGER PRIMARY KEY AUTOINCREMENT, table_name TEXT NOT NULL,
           record_id TEXT NOT NULL, operation TEXT NOT NULL DEFAULT 'create',
           payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-          created_at TEXT NOT NULL, retry_count INTEGER DEFAULT 0)''');
+          created_at TEXT NOT NULL, retry_count INTEGER DEFAULT 0,
+          updated_at TEXT)''');
       } catch (_) {}
     }
 
@@ -604,6 +606,11 @@ class DatabaseHelper {
           unit_cost     REAL NOT NULL DEFAULT 0.0,
           created_at    TEXT NOT NULL)''');
       } catch (_) {}
+    }
+
+    // ── v16 — updated_at on sync_queue for last-write-wins tracking ───────
+    if (oldVersion < 16) {
+      try { await db.execute('ALTER TABLE sync_queue ADD COLUMN updated_at TEXT'); } catch (_) {}
     }
 
     await _seed(db, now);

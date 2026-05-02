@@ -193,59 +193,57 @@ class BillingRepositoryImpl implements BillingRepository {
       //   CR Inventory             totalCOGS
       //
       // licenseId is resolved BEFORE the transaction to avoid sqflite deadlock.
-      try {
-        final ledger = LedgerService.instance;
+      //
+      // ATOMICITY: no try/catch here — a ledger failure must roll back the
+      // entire transaction (bill + items + stock deduction) so the DB stays
+      // consistent. Callers should catch the error and surface it to the UI.
+      final ledger = LedgerService.instance;
 
-        final ledgerEntries = <LedgerEntryInput>[];
+      final ledgerEntries = <LedgerEntryInput>[];
 
-        for (final cartItem in items) {
-          final double baseQty;
-          if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
-            baseQty = cartItem.quantity * cartItem.wholesaleToRetailQty;
-          } else {
-            baseQty = cartItem.quantity * cartItem.conversionQty;
-          }
-          final cogs = cartItem.purchasePrice * baseQty;
-          if (cogs > 0) {
-            ledgerEntries.add(LedgerEntryInput(
-              accountType: 'cogs', direction: 'debit', amount: cogs,
-              quantityChange: -baseQty,
-            ));
-            ledgerEntries.add(LedgerEntryInput(
-              accountType: 'inventory', direction: 'credit', amount: cogs,
-              quantityChange: -baseQty,
-            ));
-          }
+      for (final cartItem in items) {
+        final double baseQty;
+        if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
+          baseQty = cartItem.quantity * cartItem.wholesaleToRetailQty;
+        } else {
+          baseQty = cartItem.quantity * cartItem.conversionQty;
         }
-
-        // DR Asset = totalAmount (cash/bank received)
-        // CR Income = totalAmount
-        ledgerEntries.addAll([
-          LedgerEntryInput(accountType: 'asset', direction: 'debit', amount: totalAmount),
-          LedgerEntryInput(accountType: 'income', direction: 'credit', amount: totalAmount),
-        ]);
-
-        await ledger.recordTransaction(
-          executor: txn,
-          type: 'sale',
-          totalAmount: totalAmount,
-          tags: {
-            'bill_number': billNum,
-            'bill_id': billId,
-            'customer_name': customerName,
-            'payment_mode': effectivePaymentMode,
-            'discount_amount': discountAmount,
-          },
-          licenseId: licenseId,
-          createdAt: nowStr,
-          entries: ledgerEntries,
-        );
-        debugPrint('[saveBill] ledger written: ${ledgerEntries.length} entries');
-      } catch (ledgerErr) {
-        // Ledger write failure must NOT block the sale.
-        // Log the error and continue — the bill and stock deduction are preserved.
-        debugPrint('[saveBill] ledger write failed (non-fatal): $ledgerErr');
+        final cogs = cartItem.purchasePrice * baseQty;
+        if (cogs > 0) {
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'cogs', direction: 'debit', amount: cogs,
+            quantityChange: -baseQty,
+          ));
+          ledgerEntries.add(LedgerEntryInput(
+            accountType: 'inventory', direction: 'credit', amount: cogs,
+            quantityChange: -baseQty,
+          ));
+        }
       }
+
+      // DR Asset = totalAmount (cash/bank received)
+      // CR Income = totalAmount
+      ledgerEntries.addAll([
+        LedgerEntryInput(accountType: 'asset', direction: 'debit', amount: totalAmount),
+        LedgerEntryInput(accountType: 'income', direction: 'credit', amount: totalAmount),
+      ]);
+
+      await ledger.recordTransaction(
+        executor: txn,
+        type: 'sale',
+        totalAmount: totalAmount,
+        tags: {
+          'bill_number': billNum,
+          'bill_id': billId,
+          'customer_name': customerName,
+          'payment_mode': effectivePaymentMode,
+          'discount_amount': discountAmount,
+        },
+        licenseId: licenseId,
+        createdAt: nowStr,
+        entries: ledgerEntries,
+      );
+      debugPrint('[saveBill] ledger written: ${ledgerEntries.length} entries');
 
       return Bill(id: billId, billNumber: billNum, billType: billType,  // FIX BUG#1
           items: billItems, totalAmount: totalAmount, totalProfit: totalProfit,
