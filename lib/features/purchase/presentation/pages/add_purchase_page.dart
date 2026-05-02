@@ -6,11 +6,14 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../../masters/domain/entities/masters.dart';
 import '../../../masters/presentation/bloc/masters_bloc.dart';
+import '../../../products/data/repositories/product_repository_impl.dart';
 import '../../../products/domain/entities/bom_ingredient.dart';
 import '../../../products/domain/entities/product.dart';
 import '../../../products/presentation/bloc/product_bloc.dart';
+import '../../../products/presentation/pages/add_edit_product_page.dart';
 import '../../domain/entities/purchase.dart';
 
 class AddPurchasePage extends StatefulWidget {
@@ -300,10 +303,21 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
   Product? _selected;
   final _qtyCtrl = TextEditingController(text: '1');
   final _costCtrl = TextEditingController();
+  final _batchNumCtrl = TextEditingController();
   double _gstRate = 0;
   String _searchQ = '';
   List<Map<String, dynamic>> _purchaseUoms = [];
   Map<String, dynamic>? _selectedUom;
+  // Optional expiry date for FEFO batch tracking
+  DateTime? _expiryDate;
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    _costCtrl.dispose();
+    _batchNumCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _loadPurchaseUoms(int productId) async {
     final db = await DatabaseHelper.instance.database;
@@ -321,6 +335,90 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
     });
   }
 
+  /// Opens the shared [BarcodeScannerSheet] and handles the result:
+  /// - Found → automatically selects the product in the picker.
+  /// - Not found → shows a dialog offering to create a new product with the
+  ///   barcode pre-filled (navigates to [AddEditProductPage]).
+  Future<void> _scanBarcode(BuildContext context) async {
+    final barcode = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const BarcodeScannerSheet(),
+    );
+    if (barcode == null || barcode.isEmpty || !mounted) return;
+
+    // Look up the product by exact barcode match.
+    final repo = ProductRepositoryImpl(DatabaseHelper.instance);
+    final product = await repo.findByBarcode(barcode);
+    if (!mounted) return;
+
+    if (product == null) {
+      // No match — offer to create a new product with the barcode pre-filled.
+      _showBarcodeNotFoundDialog(context, barcode);
+      return;
+    }
+
+    // Product found — select it and load its purchase UOMs.
+    setState(() {
+      _selected = product;
+      _costCtrl.text = product.purchasePrice.toStringAsFixed(2);
+      _gstRate = product.gstRate;
+      _purchaseUoms = [];
+      _selectedUom = null;
+      _expiryDate = null;
+      _batchNumCtrl.clear();
+    });
+    _loadPurchaseUoms(product.id!);
+  }
+
+  /// Prompts the user to create a product when the scanned barcode is unknown.
+  void _showBarcodeNotFoundDialog(BuildContext context, String barcode) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Row(children: [
+          Text('🔍', style: TextStyle(fontSize: 22.sp)),
+          SizedBox(width: 8.w),
+          const Expanded(child: Text('Product Not Found')),
+        ]),
+        content: Text(
+          'No product matched barcode:\n$barcode\n\nWould you like to create a new product?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              // Navigate to AddEditProductPage with the barcode pre-filled.
+              // After returning, reload the product list so the new product
+              // is immediately available in the purchase picker.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BlocProvider.value(
+                    value: context.read<ProductBloc>(),
+                    child: AddEditProductPage(initialBarcode: barcode),
+                  ),
+                ),
+              ).then((_) {
+                if (mounted) {
+                  context.read<ProductBloc>().add(LoadProducts());
+                }
+              });
+            },
+            child: const Text('Create Product'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = widget.products.where((p) => p.name.toLowerCase().contains(_searchQ.toLowerCase())).toList();
@@ -334,10 +432,30 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
         SizedBox(height: 12.h),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16.w),
-          child: TextField(
-            onChanged: (v) => setState(() => _searchQ = v),
-            decoration: const InputDecoration(hintText: 'Search product...', prefixIcon: Icon(Icons.search)),
-          ),
+          child: Row(children: [
+            Expanded(child: TextField(
+              onChanged: (v) => setState(() => _searchQ = v),
+              decoration: const InputDecoration(hintText: 'Search product...', prefixIcon: Icon(Icons.search)),
+            )),
+            SizedBox(width: 8.w),
+            // ── Barcode scan button ──────────────────────────────────────────
+            // Tap to open the camera scanner.  If the product is found it is
+            // selected automatically; if not, the user is offered the option
+            // to create a new product with the barcode pre-filled.
+            GestureDetector(
+              onTap: () => _scanBarcode(context),
+              child: Container(
+                width: 44.w,
+                height: 44.h,
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(10.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Icon(Icons.qr_code_scanner, color: AppTheme.textSecondary, size: 22.sp),
+              ),
+            ),
+          ]),
         ),
         SizedBox(height: 8.h),
         Expanded(child: _selected == null
@@ -353,6 +471,8 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                 _gstRate = filtered[i].gstRate;
                 _purchaseUoms = [];
                 _selectedUom = null;
+                _expiryDate = null;
+                _batchNumCtrl.clear();
               });
               _loadPurchaseUoms(filtered[i].id!);
             },
@@ -360,7 +480,8 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
         )
             : Padding(
           padding: EdgeInsets.all(16.w),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: Text(_selected!.name, style: AppTheme.heading2)),
               TextButton(onPressed: () => setState(() => _selected = null), child: const Text('Change')),
@@ -424,6 +545,53 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
               items: [0.0, 5.0, 12.0, 18.0, 28.0].map((r) => DropdownMenuItem(value: r, child: Text('${r.toStringAsFixed(0)}%'))).toList(),
               onChanged: (v) => setState(() => _gstRate = v ?? 0),
             ),
+            SizedBox(height: 10.h),
+            // ── Batch tracking fields (optional) ──────────────────────────
+            // These create a batches row so billing can apply FEFO later.
+            TextField(
+              controller: _batchNumCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Batch No. (optional)',
+                prefixIcon: Icon(Icons.tag),
+              ),
+            ),
+            SizedBox(height: 10.h),
+            // Expiry date picker — tap to open calendar
+            GestureDetector(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _expiryDate ?? DateTime.now().add(const Duration(days: 180)),
+                  firstDate: DateTime.now(),
+                  lastDate: DateTime(2100),
+                );
+                if (picked != null) setState(() => _expiryDate = picked);
+              },
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(8.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 18),
+                  SizedBox(width: 10.w),
+                  Text(
+                    _expiryDate == null
+                        ? 'Expiry Date (optional)'
+                        : 'Expires: ${DateFormat('dd MMM yyyy').format(_expiryDate!)}',
+                    style: _expiryDate == null ? AppTheme.caption : AppTheme.body,
+                  ),
+                  const Spacer(),
+                  if (_expiryDate != null)
+                    GestureDetector(
+                      onTap: () => setState(() => _expiryDate = null),
+                      child: const Icon(Icons.clear, size: 16, color: AppTheme.textSecondary),
+                    ),
+                ]),
+              ),
+            ),
             SizedBox(height: 16.h),
             ElevatedButton(
               onPressed: () {
@@ -432,13 +600,17 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                 final uomUnit = _selectedUom != null
                     ? _selectedUom!['uom_name'] as String
                     : (_selected!.wholesaleToRetailQty > 1.0 ? _selected!.wholesaleUnit : _selected!.unit);
+                final batchNumTrimmed = _batchNumCtrl.text.trim();
+                final batchNum = batchNumTrimmed.isEmpty ? null : batchNumTrimmed;
                 widget.onItemAdded(PurchaseCartItem(
                     productId: _selected!.id!, productName: _selected!.name,
-                    unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate));
+                    unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate,
+                    batchNumber: batchNum, expiryDate: _expiryDate));
               },
               child: const Text('Add to Purchase'),
             ),
           ]),
+          ),
         ),
         ),
       ]),
