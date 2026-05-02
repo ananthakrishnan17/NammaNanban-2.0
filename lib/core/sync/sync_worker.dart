@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../../features/license/domain/entities/license.dart';
 import '../../features/license/domain/repositories/license_repository.dart';
 import '../supabase/supabase_config.dart';
 import 'sync_queue.dart';
@@ -8,7 +7,7 @@ import 'sync_queue_repository.dart';
 import 'sync_status.dart';
 
 /// Processes pending sync queue items by uploading them to Supabase.
-/// Only runs for Online license users.
+/// Runs for any valid license (online or offline).
 ///
 /// ## Retry mechanism
 /// Each item carries a [SyncQueueItem.retryCount]. If processing fails the
@@ -58,11 +57,8 @@ class SyncWorker {
         debugPrint('[SyncWorker] no valid license — aborting');
         return;
       }
-      // Only sync for online license
-      if (license.licenseType != LicenseType.online) {
-        debugPrint('[SyncWorker] offline license — no cloud sync');
-        return;
-      }
+      debugPrint('[SyncWorker] license ok — '
+          'id=${license.id} type=${license.licenseType.value}');
 
       final pending = await SyncQueueRepository.instance.getPending();
       debugPrint('[SyncWorker] ${pending.length} item(s) pending');
