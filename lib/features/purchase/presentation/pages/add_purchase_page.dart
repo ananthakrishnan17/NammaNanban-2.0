@@ -46,7 +46,28 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // BlocListener handles async save completion: shows snackbar + pops on
+    // success, shows error snackbar and re-enables the save button on failure.
+    // This prevents navigating away before the DB transaction completes.
+    return BlocListener<PurchaseBloc, PurchaseState>(
+      listenWhen: (prev, curr) => prev.isSaving && !curr.isSaving,
+      listener: (ctx, state) {
+        if (state.lastSaved != null) {
+          // Reset flag before popping so the widget is in a clean state if
+          // the user navigates back to this page in the same session.
+          setState(() => _isSaving = false);
+          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+              content: Text('Purchase saved! Stock updated.'),
+              backgroundColor: AppTheme.accent));
+          Navigator.pop(ctx);
+        } else if (state.error != null) {
+          setState(() => _isSaving = false);
+          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+              content: Text('Save failed: ${state.error}'),
+              backgroundColor: AppTheme.danger));
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Purchase Entry'),
         actions: [
@@ -238,7 +259,7 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
             ),
         ],
       ),
-    );
+    )); // closes child: Scaffold + BlocListener
   }
 
   Widget _sectionLabel(String label) => Padding(
@@ -255,12 +276,40 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(item.productName, style: AppTheme.heading3),
           Text('${item.quantity} ${item.unit} × ${CurrencyFormatter.format(item.unitCost)} | GST ${item.gstRate}%', style: AppTheme.caption),
+          // Show batch number and expiry date chips so the user can verify
+          // what batch metadata was captured before saving.
+          if (item.batchNumber != null || item.expiryDate != null) ...[
+            SizedBox(height: 4.h),
+            Wrap(spacing: 6.w, children: [
+              if (item.batchNumber != null)
+                _batchChip(Icons.tag, 'Batch: ${item.batchNumber!}'),
+              if (item.expiryDate != null)
+                _batchChip(Icons.calendar_today,
+                    'Exp: ${DateFormat('dd MMM yyyy').format(item.expiryDate!)}'),
+            ]),
+          ],
           Text(CurrencyFormatter.format(item.totalCost), style: AppTheme.price.copyWith(fontSize: 14.sp)),
         ])),
         IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.danger), onPressed: () => setState(() => _items.removeAt(index))),
       ]),
     );
   }
+
+  /// Small pill chip used to display optional batch metadata on item tiles.
+  Widget _batchChip(IconData icon, String label) => Container(
+    padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+    decoration: BoxDecoration(
+      color: AppTheme.primary.withOpacity(0.07),
+      borderRadius: BorderRadius.circular(6.r),
+      border: Border.all(color: AppTheme.primary.withOpacity(0.2)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 10.sp, color: AppTheme.primary),
+      SizedBox(width: 3.w),
+      Text(label, style: AppTheme.caption.copyWith(
+          fontSize: 10.sp, color: AppTheme.primary)),
+    ]),
+  );
 
   void _addItemSheet(BuildContext context) {
     showModalBottomSheet(
@@ -278,16 +327,14 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
   }
 
   Future<void> _savePurchase() async {
+    // Dispatch the save event; BlocListener in build() handles navigation and
+    // feedback once the async transaction completes (success or failure).
     setState(() => _isSaving = true);
     context.read<PurchaseBloc>().add(SavePurchaseEvent(
       items: _items, supplierId: _selectedSupplier?.id,
       supplierName: _selectedSupplier?.name, paymentMode: _paymentMode,
       notes: _notesCtrl.text.isEmpty ? null : _notesCtrl.text, purchaseDate: _purchaseDate,
     ));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase saved! Stock updated.'), backgroundColor: AppTheme.accent));
-      Navigator.pop(context);
-    }
   }
 }
 
