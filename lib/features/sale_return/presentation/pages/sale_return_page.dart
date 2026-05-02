@@ -111,7 +111,12 @@ class SaleReturnRepository {
     final returnNumber = await _generateReturnNumber();
     final total = items.fold(0.0, (s, i) => s + i.totalPrice);
 
-    final result = await db.transaction((txn) async {
+    // IMPORTANT: resolve licenseId BEFORE the transaction to prevent sqflite
+    // deadlock — resolveLicenseId opens the main DB connection, which conflicts
+    // with the exclusive lock held by db.transaction().
+    final licenseId = await LedgerService.resolveLicenseId(_db);
+
+    return db.transaction((txn) async {
       final retId = await txn.insert('sale_returns', {
         'return_number': returnNumber,
         'original_bill_id': originalBillId,
@@ -147,6 +152,27 @@ class SaleReturnRepository {
         );
       }
 
+      // ── Double-entry ledger ─────────────────────────────────────────────
+      // Sale-return journal:
+      //   DR Income    returnAmount  (revenue reversal)
+      //   CR Asset     returnAmount  (refund issued)
+      //
+      // ATOMICITY: inside the same transaction so a ledger failure rolls back
+      // the entire return (return record + items + stock restoration).
+      await LedgerService.instance.recordSaleReturn(
+        txn: txn,
+        returnAmount: total,
+        returnCost: 0, // purchase price not stored on return items; no COGS reversal
+        licenseId: licenseId,
+        tags: {
+          'return_number': returnNumber,
+          'original_bill_number': originalBillNumber,
+          'customer_name': customerName,
+          'refund_mode': refundMode,
+          'reason': reason,
+        },
+      );
+
       return SaleReturn(
         id: retId,
         returnNumber: returnNumber,
@@ -161,28 +187,6 @@ class SaleReturnRepository {
         createdAt: now,
       );
     });
-
-    // Write double-entry ledger for sale return (best-effort)
-    try {
-      final licenseId = await LedgerService.resolveLicenseId(_db);
-      await db.transaction((txn) async {
-        await LedgerService.instance.recordSaleReturn(
-          txn: txn,
-          returnAmount: total,
-          returnCost: 0, // purchase price not stored on return items; no COGS reversal
-          licenseId: licenseId,
-          tags: {
-            'return_number': returnNumber,
-            'original_bill_number': originalBillNumber,
-            'customer_name': customerName,
-            'refund_mode': refundMode,
-            'reason': reason,
-          },
-        );
-      });
-    } catch (_) {}
-
-    return result;
   }
 
   // Original bill-ல இருந்து item details (conversion info உட்பட) fetch பண்ணு
