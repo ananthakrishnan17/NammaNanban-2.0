@@ -1,4 +1,6 @@
 
+import 'dart:convert';
+
 import '../database/database_helper.dart';
 import 'sync_queue.dart';
 import 'sync_status.dart';
@@ -15,6 +17,39 @@ class SyncQueueRepository {
     required Map<String, dynamic> payload,
   }) async {
     final db = await DatabaseHelper.instance.database;
+    final now = DateTime.now().toIso8601String();
+
+    // Dedup: if a pending/failed entry already exists for this record, update
+    // its payload and reset it to pending instead of inserting a duplicate.
+    // This prevents accumulating multiple rows for the same record on retries.
+    final existing = await db.query(
+      'sync_queue',
+      where: 'table_name = ? AND record_id = ? AND (status = ? OR status = ?)',
+      whereArgs: [
+        tableName,
+        recordId,
+        SyncStatus.pending.value,
+        SyncStatus.failed.value,
+      ],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      await db.update(
+        'sync_queue',
+        {
+          'payload': jsonEncode(payload),
+          'operation': operation.value,
+          'status': SyncStatus.pending.value,
+          'retry_count': 0,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
+      return;
+    }
+
     final item = SyncQueueItem(
       tableName: tableName,
       recordId: recordId,
@@ -23,7 +58,10 @@ class SyncQueueRepository {
       status: SyncStatus.pending,
       createdAt: DateTime.now(),
     );
-    await db.insert('sync_queue', item.toMap());
+    await db.insert('sync_queue', {
+      ...item.toMap(),
+      'updated_at': now,
+    });
   }
 
   Future<List<SyncQueueItem>> getPending() async {
@@ -45,6 +83,8 @@ class SyncQueueRepository {
       {
         'status': status.value,
         if (retryCount != null) 'retry_count': retryCount,
+        // Stamp the time so last-write-wins comparisons are accurate
+        'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: [id],

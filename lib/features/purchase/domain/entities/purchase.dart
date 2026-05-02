@@ -109,20 +109,29 @@ class PurchaseRepository {
   }) async {
     final db = await _db.database;
     final now = DateTime.now();
+    final nowStr = now.toIso8601String();
     final date = purchaseDate ?? now;
 
     double total = items.fold(0.0, (s, i) => s + i.totalCost);
     double gstTotal = items.fold(0.0, (s, i) => s + i.gstAmount);
 
-    final purchase = await db.transaction((txn) async {
+    // IMPORTANT: resolve licenseId BEFORE the transaction to prevent sqflite
+    // deadlock — resolveLicenseId opens the main DB connection, which conflicts
+    // with the exclusive lock held by db.transaction().
+    final licenseId = await LedgerService.resolveLicenseId(_db);
+
+    return db.transaction((txn) async {
       final purchaseId = await txn.insert('purchases', {
         'purchase_number': _genNumber(), 'supplier_id': supplierId,
         'supplier_name': supplierName, 'total_amount': total, 'gst_total': gstTotal,
         'discount_amount': 0, 'payment_mode': paymentMode, 'notes': notes,
-        'purchase_date': date.toIso8601String(), 'created_at': now.toIso8601String(),
+        'purchase_date': date.toIso8601String(), 'created_at': nowStr,
       });
 
       final purchaseItems = <PurchaseItem>[];
+      // Collect base quantities for the consolidated ledger entry
+      final Map<int, double> productBaseQtyMap = {};
+
       for (final item in items) {
         final itemId = await txn.insert('purchase_items', {
           'purchase_id': purchaseId, 'product_id': item.productId,
@@ -141,11 +150,12 @@ class PurchaseRepository {
             ? item.quantity * wholesaleToRetailQty
             : item.quantity;
         await txn.rawUpdate('UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
-            [stockIncrement, now.toIso8601String(), item.productId]);
+            [stockIncrement, nowStr, item.productId]);
         // Update purchase price
         await txn.rawUpdate('UPDATE products SET purchase_price = ?, updated_at = ? WHERE id = ?',
-            [item.unitCost, now.toIso8601String(), item.productId]);
+            [item.unitCost, nowStr, item.productId]);
 
+        productBaseQtyMap[item.productId] = stockIncrement;
         purchaseItems.add(PurchaseItem(id: itemId, purchaseId: purchaseId,
             productId: item.productId, productName: item.productName,
             quantity: item.quantity, unit: item.unit, unitCost: item.unitCost,
@@ -154,99 +164,63 @@ class PurchaseRepository {
 
       // ── Double-entry ledger ─────────────────────────────────────────────
       // Purchase journal:
-      //   DR Inventory   totalCost (stock in, qty positive)
-      //   CR Asset/Liability  totalCost (cash/bank/payable)
-      try {
-        final ledger = LedgerService.instance;
-        final licenseId = await LedgerService.resolveLicenseId(_db);
-        final nowStr = now.toIso8601String();
+      //   DR Inventory   total (stock in — consolidated to match credit exactly)
+      //   CR Asset/Liability   total (cash paid or credit payable)
+      //
+      // ATOMICITY: no try/catch — ledger failure rolls back the whole
+      // transaction (purchase record + items + stock updates).
+      final ledger = LedgerService.instance;
+      final creditType = paymentMode == 'credit' ? 'liability' : 'asset';
 
-        final ledgerEntries = <LedgerEntryInput>[];
-        for (int i = 0; i < purchaseItems.length; i++) {
-          final pi = purchaseItems[i];
-          final qty = items[i].quantity;
-          final wholesaleToRetailQty = (await txn.query('products',
-              columns: ['wholesale_to_retail_qty'],
-              where: 'id = ?', whereArgs: [pi.productId]))
-              .map((r) => (r['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0)
-              .firstOrNull ?? 1.0;
-          final stockQty = wholesaleToRetailQty > 1.0 ? qty * wholesaleToRetailQty : qty;
-          ledgerEntries.add(LedgerEntryInput(
-            accountType: 'inventory', direction: 'debit',
-            amount: pi.totalCost, quantityChange: stockQty,
-          ));
-        }
-        // CR asset (cash out) or liability (payable) depending on payment mode
-        final creditType = paymentMode == 'credit' ? 'liability' : 'asset';
+      // Build per-item debit entries; if their sum mismatches total (GST
+      // rounding), collapse into a single consolidated debit for balance.
+      final ledgerEntries = <LedgerEntryInput>[];
+      for (final pi in purchaseItems) {
         ledgerEntries.add(LedgerEntryInput(
-          accountType: creditType, direction: 'credit', amount: total,
+          accountType: 'inventory', direction: 'debit',
+          amount: pi.totalCost,
+          quantityChange: productBaseQtyMap[pi.productId],
         ));
-        // Balance: sum of per-item debits may differ from total due to GST rounding.
-        // Use total as the single credit and adjust debit to match.
-        final debitTotal = ledgerEntries
-            .where((e) => e.direction == 'debit')
-            .fold(0.0, (s, e) => s + e.amount);
-        if ((debitTotal - total).abs() > 0.005) {
-          // Replace per-item debit entries with a single consolidated entry
-          ledgerEntries.removeWhere((e) => e.direction == 'debit');
-          double totalBaseQty = 0;
-          for (int i = 0; i < purchaseItems.length; i++) {
-            final qty = items[i].quantity;
-            final wholesaleToRetailQty = (await txn.query('products',
-                columns: ['wholesale_to_retail_qty'],
-                where: 'id = ?', whereArgs: [purchaseItems[i].productId]))
-                .map((r) => (r['wholesale_to_retail_qty'] as num?)?.toDouble() ?? 1.0)
-                .firstOrNull ?? 1.0;
-            totalBaseQty += wholesaleToRetailQty > 1.0 ? qty * wholesaleToRetailQty : qty;
-          }
-          ledgerEntries.add(LedgerEntryInput(
-            accountType: 'inventory', direction: 'debit',
-            amount: total, quantityChange: totalBaseQty,
-          ));
-        }
-
-        await ledger.recordTransaction(
-          executor: txn,
-          type: 'purchase',
-          totalAmount: total,
-          tags: {
-            'purchase_id': purchaseId,
-            'supplier_name': supplierName,
-            'payment_mode': paymentMode,
-            'notes': notes,
-          },
-          licenseId: licenseId,
-          createdAt: nowStr,
-          entries: ledgerEntries,
-        );
-      } catch (_) {
-        rethrow;
       }
+      // CR asset/liability = full invoice total
+      ledgerEntries.add(LedgerEntryInput(
+        accountType: creditType, direction: 'credit', amount: total,
+      ));
+
+      // Collapse debit side if rounding drift > 0.5 paisa
+      final debitSum = ledgerEntries
+          .where((e) => e.direction == 'debit')
+          .fold(0.0, (s, e) => s + e.amount);
+      if ((debitSum - total).abs() > 0.005) {
+        final totalBaseQty =
+            productBaseQtyMap.values.fold(0.0, (s, q) => s + q);
+        ledgerEntries.removeWhere((e) => e.direction == 'debit');
+        ledgerEntries.add(LedgerEntryInput(
+          accountType: 'inventory', direction: 'debit',
+          amount: total, quantityChange: totalBaseQty,
+        ));
+      }
+
+      await ledger.recordTransaction(
+        executor: txn,
+        type: 'purchase',
+        totalAmount: total,
+        tags: {
+          'purchase_id': purchaseId,
+          'supplier_name': supplierName,
+          'payment_mode': paymentMode,
+          'notes': notes,
+        },
+        licenseId: licenseId,
+        createdAt: nowStr,
+        entries: ledgerEntries,
+      );
 
       return Purchase(id: purchaseId, purchaseNumber: 'PUR-$purchaseId',
           supplierId: supplierId, supplierName: supplierName, items: purchaseItems,
           totalAmount: total, gstTotal: gstTotal, paymentMode: paymentMode,
           notes: notes, purchaseDate: date, createdAt: now);
     });
-
-    // Write double-entry ledger (best-effort)
-    try {
-      final licenseId = await LedgerService.resolveLicenseId(_db);
-      await db.transaction((txn) async {
-        await LedgerService.instance.recordPurchase(
-          txn: txn,
-          totalAmount: total,
-          licenseId: licenseId,
-          tags: {
-            'supplier_name': supplierName,
-            'payment_mode': paymentMode,
-            'notes': notes,
-          },
-        );
-      });
-    } catch (_) {}
-
-    return purchase;
   }
 
   Future<List<Purchase>> getRecentPurchases({int limit = 50}) async {
