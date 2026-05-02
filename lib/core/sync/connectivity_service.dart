@@ -1,15 +1,22 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 /// Monitors network connectivity and fires callbacks when the network is
 /// restored so pending sync items can be processed.
+///
+/// NOTE: Uses the connectivity_plus v5 API where both [Connectivity.checkConnectivity]
+/// and [Connectivity.onConnectivityChanged] return [List<ConnectivityResult>] instead
+/// of a single [ConnectivityResult]. The old single-value comparison caused
+/// [isOnline] to always read `false` (the default) because the stream subscription
+/// type was wrong and the initial check compared a List to an enum value.
 class ConnectivityService {
   static final ConnectivityService instance = ConnectivityService._();
   ConnectivityService._();
 
   final Connectivity _connectivity = Connectivity();
   bool _isOnline = false;
-  StreamSubscription<ConnectivityResult>? _subscription;
+  StreamSubscription<List<ConnectivityResult>>? _subscription;
 
   bool get isOnline => _isOnline;
 
@@ -17,18 +24,30 @@ class ConnectivityService {
 
   /// Start monitoring. Should be called once at app startup.
   Future<void> init() async {
-    final result = await _connectivity.checkConnectivity();
-    _isOnline = result != ConnectivityResult.none;
+    // connectivity_plus v5+: checkConnectivity() returns List<ConnectivityResult>
+    final results = await _connectivity.checkConnectivity();
+    _isOnline = _resultsAreOnline(results);
+    debugPrint('[ConnectivityService] init — results=$results isOnline=$_isOnline');
 
-    _subscription = _connectivity.onConnectivityChanged.listen((result) {
+    // connectivity_plus v5+: onConnectivityChanged emits List<ConnectivityResult>
+    _subscription = _connectivity.onConnectivityChanged.listen((results) {
       final wasOnline = _isOnline;
-      _isOnline = result != ConnectivityResult.none;
+      _isOnline = _resultsAreOnline(results);
+      debugPrint('[ConnectivityService] changed — results=$results isOnline=$_isOnline');
       if (!wasOnline && _isOnline) {
+        debugPrint('[ConnectivityService] network restored — '
+            'triggering ${_onRestoreCallbacks.length} callback(s)');
         for (final cb in _onRestoreCallbacks) {
           cb();
         }
       }
     });
+  }
+
+  /// Returns true when at least one active connection is not [ConnectivityResult.none].
+  bool _resultsAreOnline(List<ConnectivityResult> results) {
+    return results.isNotEmpty &&
+        results.any((r) => r != ConnectivityResult.none);
   }
 
   /// Register a callback to be called when network is restored.

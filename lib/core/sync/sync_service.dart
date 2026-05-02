@@ -1,4 +1,5 @@
-import '../../features/license/domain/entities/license.dart';
+import 'package:flutter/foundation.dart';
+
 import '../../features/license/domain/repositories/license_repository.dart';
 import 'sync_queue.dart';
 import 'sync_queue_repository.dart';
@@ -8,26 +9,26 @@ import 'connectivity_service.dart';
 
 /// Main sync orchestrator.
 ///
-/// - Offline license: no background sync — data stays local.
-/// - Online license: enqueue changes and process on network availability.
+/// Any valid license (online or offline) may enqueue changes — the license
+/// type no longer blocks sync. Data is queued locally on every write and
+/// uploaded to Supabase whenever a network connection is available.
+///
+/// ## Sync decision logic
+/// 1. A cached license must exist (needed for `device_id` / `license.id`).
+/// 2. `ConnectivityService.isOnline` must be true **at the time of the
+///    immediate-fire trigger**. Items queued while offline are uploaded later
+///    when the network is restored via the [ConnectivityService.onNetworkRestored]
+///    callback registered in [init].
 ///
 /// ## Conflict resolution
 /// Each enqueued change is enriched with two fields before it is forwarded to
 /// [SyncQueueRepository.enqueue]:
 ///
 /// * `updated_at` — ISO-8601 wall-clock timestamp of the write on this device.
-///   The Supabase schema uses this for last-write-wins (LWW): a server-side
-///   trigger rejects incoming upserts whose `updated_at` is older than the
-///   existing row's value, so the most recent edit always wins regardless of
-///   which device syncs first.
+///   The Supabase schema uses this for last-write-wins (LWW).
 ///
-/// * `device_id` — stable identifier of this device, stored both as a
-///   first-class column in sync_queue and inside the payload forwarded to
-///   Supabase, enabling multi-device conflict auditing.
-///
-/// The [SyncQueueRepository] ensures there is at most one pending row per
-/// (table_name, record_id) at any time, so rapid offline edits do not pile up
-/// into duplicate sync requests.
+/// * `device_id` — stable identifier of this device, forwarded to Supabase for
+///   multi-device conflict auditing.
 class SyncService {
   static final SyncService instance = SyncService._();
   SyncService._();
@@ -39,40 +40,43 @@ class SyncService {
 
     // When network is restored, run the sync worker
     ConnectivityService.instance.onNetworkRestored(() {
+      debugPrint('[SyncService] network restored — running worker');
       _runWorker();
     });
   }
 
-  /// Enqueue a create/update/delete for syncing, but only for Online licenses.
-  /// For Offline licenses this is a no-op (data stays local only).
+  /// Enqueue a create/update/delete for syncing.
+  ///
+  /// Requires only that a valid cached license exists. The license type
+  /// (`online`/`offline`) no longer prevents enqueueing — all license types
+  /// sync to Supabase when internet is available.
   ///
   /// The payload is automatically enriched with [device_id] and [updated_at]
   /// so that Supabase can perform last-write-wins conflict resolution.
-  /// ⚠️  Requires Supabase schema to have `device_id` and `updated_at` columns
-  ///     on the target table (see supabase/schema.sql migration v12).
   Future<void> enqueue({
     required String tableName,
     required String recordId,
     required SyncOperation operation,
     required Map<String, dynamic> payload,
   }) async {
+    final isOnline = ConnectivityService.instance.isOnline;
     final license = await _licenseRepository?.getCachedLicense();
+
+    debugPrint('[SyncService] enqueue check — '
+        'table=$tableName id=$recordId '
+        'isOnline=$isOnline '
+        'licenseType=${license?.licenseType.value ?? "none"} '
+        'licenseValid=${license?.isValid}');
+
     if (license == null) {
       debugPrint('[SyncService] enqueue skipped ($tableName/$recordId): '
           'no cached license — activate a license first');
-      return;
-    }
-    if (license.licenseType != LicenseType.online) {
-      debugPrint('[SyncService] enqueue skipped ($tableName/$recordId): '
-          'license is ${license.licenseType.value} — only online licenses sync to cloud');
       return;
     }
 
     final now = DateTime.now().toIso8601String();
 
     // Enrich payload with device context for last-write-wins conflict resolution.
-    // updated_at lets the Supabase upsert determine which write is newer.
-    // device_id helps trace which device originated the change.
     final enrichedPayload = {
       ...payload,
       'device_id': license.deviceId,
@@ -84,14 +88,13 @@ class SyncService {
       recordId: recordId,
       operation: operation,
       payload: enrichedPayload,
-      // Also stored as a first-class column for diagnostics without decoding
-      // the payload JSON.
       deviceId: license.deviceId,
     );
-    debugPrint('[SyncService] enqueued $tableName/$recordId (${operation.value})');
+    debugPrint('[SyncService] ✓ enqueued $tableName/$recordId (${operation.value}) '
+        '— licenseType=${license.licenseType.value}');
 
     // Try to sync immediately if online
-    if (ConnectivityService.instance.isOnline) {
+    if (isOnline) {
       debugPrint('[SyncService] online — triggering worker for $tableName/$recordId');
       _runWorker();
     } else {
@@ -109,7 +112,11 @@ class SyncService {
   /// Call on app foreground to catch up any pending items.
   Future<void> syncNow() async {
     if (_licenseRepository == null) return;
-    if (!ConnectivityService.instance.isOnline) return;
+    if (!ConnectivityService.instance.isOnline) {
+      debugPrint('[SyncService] syncNow skipped — offline');
+      return;
+    }
+    debugPrint('[SyncService] syncNow — running worker');
     await SyncWorker.instance.run(_licenseRepository!);
   }
 
