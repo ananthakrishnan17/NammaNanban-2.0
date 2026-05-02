@@ -99,7 +99,19 @@ class BillingRepositoryImpl implements BillingRepository {
     final String licenseId = await LedgerService.resolveLicenseId(_dbHelper);
     debugPrint('[saveBill] licenseId resolved: $licenseId');
 
+    // ── ATOMIC TRANSACTION ────────────────────────────────────────────────
+    // All four steps below run inside a single SQLite transaction so that a
+    // failure in any one of them automatically rolls back the whole operation:
+    //   Step 1 — Insert bill row (+ split-payment rows)
+    //   Step 2 — Insert bill_item rows
+    //   Step 3 — Deduct stock for every item sold
+    //   Step 4 — Write JSON snapshot + double-entry ledger entries
+    // No try/catch is used here intentionally — any exception propagates up,
+    // causing sqflite to roll back the transaction before it is committed.
     final bill = await db.transaction((txn) async {
+      // ── Step 1: Insert bill ────────────────────────────────────────────
+      // snapshot_json is written in Step 4, after all items have been built,
+      // so the snapshot contains the final resolved item list and totals.
       final billId = await txn.insert('bills', {
         'bill_number': billNum, 'bill_type': billType,  // FIX BUG#1
         'customer_id': customerId, 'customer_name': customerName,
@@ -125,6 +137,7 @@ class BillingRepositoryImpl implements BillingRepository {
       }
 
       final billItems = <BillItem>[];
+      // ── Step 2: Insert bill items + deduct stock (Step 3) ─────────────
       for (final cartItem in items) {
         final effectivePrice = cartItem.effectivePrice(bt);
         final gstAmt = cartItem.gstAmountFor(bt);
@@ -142,7 +155,8 @@ class BillingRepositoryImpl implements BillingRepository {
         });
         debugPrint('[saveBill] item inserted: id=$itemId, product=${cartItem.productName}');
 
-        // Deduct stock — wholesale items deduct wholesaleToRetailQty per unit
+        // ── Step 3: Deduct stock ───────────────────────────────────────
+        // Wholesale items deduct wholesaleToRetailQty per unit (base UOM).
         final double baseQtyToDeduct;
         if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
           baseQtyToDeduct = cartItem.quantity * cartItem.wholesaleToRetailQty;
@@ -185,6 +199,44 @@ class BillingRepositoryImpl implements BillingRepository {
       }
       debugPrint('[saveBill] items inserted: count=${billItems.length}');
 
+      // ── Step 4: Snapshot + double-entry ledger ────────────────────────
+      // Persist an immutable JSON copy of the bill so receipt rendering never
+      // needs to re-join bill_items.  Written here (after step 3) so the
+      // snapshot reflects the final, fully-resolved item list and totals.
+      final snapshotMap = {
+        'bill_number': billNum,
+        'bill_type': billType,
+        'total_amount': totalAmount,
+        'total_profit': totalProfit,
+        'discount_amount': discountAmount,
+        'gst_total': gstTotal,
+        'cgst_total': cgstAmount,
+        'sgst_total': sgstAmount,
+        'igst_total': igstAmount,
+        'payment_mode': effectivePaymentMode,
+        'split_payment_summary': splitSummary,
+        'customer_name': customerName,
+        'customer_address': customerAddress,
+        'customer_gstin': customerGstin,
+        'created_at': nowStr,
+        'items': billItems.map((i) => {
+          'product_id': i.productId,
+          'product_name': i.productName,
+          'quantity': i.quantity,
+          'unit': i.unit,
+          'unit_price': i.unitPrice,
+          'purchase_price': i.purchasePrice,
+          'gst_rate': i.gstRate,
+          'gst_amount': i.gstAmount,
+          'total_price': i.totalPrice,
+        }).toList(),
+      };
+      await txn.rawUpdate(
+        'UPDATE bills SET snapshot_json = ? WHERE id = ?',
+        [jsonEncode(snapshotMap), billId],
+      );
+      debugPrint('[saveBill] snapshot saved for bill id=$billId');
+
       // ── Double-entry ledger ─────────────────────────────────────────────
       // Sale journal (single recordTransaction call — no duplicate writes):
       //   DR Asset (cash/bank)     totalAmount
@@ -193,10 +245,7 @@ class BillingRepositoryImpl implements BillingRepository {
       //   CR Inventory             totalCOGS
       //
       // licenseId is resolved BEFORE the transaction to avoid sqflite deadlock.
-      //
-      // ATOMICITY: no try/catch here — a ledger failure must roll back the
-      // entire transaction (bill + items + stock deduction) so the DB stays
-      // consistent. Callers should catch the error and surface it to the UI.
+      // A failure here rolls back all prior steps (bill, items, stock, snapshot).
       final ledger = LedgerService.instance;
 
       final ledgerEntries = <LedgerEntryInput>[];
