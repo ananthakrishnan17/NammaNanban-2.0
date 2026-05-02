@@ -8,6 +8,7 @@ import '../../../../core/ledger/ledger_service.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/sync/sync_service.dart';
 import '../../../../core/sync/sync_status.dart';
+import '../../../../core/supabase/supabase_sync_service.dart';
 import '../../domain/entities/bill.dart';
 import '../../domain/entities/sale_type.dart';
 
@@ -108,6 +109,10 @@ class BillingRepositoryImpl implements BillingRepository {
     //   Step 4 — Write JSON snapshot + double-entry ledger entries
     // No try/catch is used here intentionally — any exception propagates up,
     // causing sqflite to roll back the transaction before it is committed.
+    //
+    // ledgerTxId is captured here so it is visible outside the closure for the
+    // transactions_sync enqueue that runs after the transaction completes.
+    int? ledgerTxId;
     final bill = await db.transaction((txn) async {
       // ── Step 1: Insert bill ────────────────────────────────────────────
       // snapshot_json is written in Step 4, after all items have been built,
@@ -368,7 +373,7 @@ class BillingRepositoryImpl implements BillingRepository {
         licenseId: licenseId,
         createdAt: nowStr,
         entries: ledgerEntries,
-      );
+      ).then((id) => ledgerTxId = id);
       debugPrint('[saveBill] ledger written: ${ledgerEntries.length} entries');
 
       return Bill(id: billId, billNumber: billNum, billType: billType,  // FIX BUG#1
@@ -406,11 +411,66 @@ class BillingRepositoryImpl implements BillingRepository {
           'items_json': _billItemsPayload(bill.items),
           'created_at': bill.createdAt.toIso8601String(),
         },
-      ).then((_) => debugPrint('[saveBill] sync queued'))
+      ).then((_) => debugPrint('[saveBill] bills_sync queued'))
        .catchError((Object e) {
-         debugPrint('[saveBill] sync enqueue failed (non-fatal): $e');
+         // Fallback: if queueing fails (e.g. local DB error), attempt a direct
+         // Supabase write so the bill is not permanently lost from the cloud.
+         debugPrint('[saveBill] bills_sync enqueue failed — attempting direct sync: $e');
+         SupabaseSyncService.instance.syncBill(
+           localBillId: bill.id!,
+           billNumber: bill.billNumber,
+           billType: bill.billType,
+           totalAmount: bill.totalAmount,
+           totalProfit: bill.totalProfit,
+           discountAmount: bill.discountAmount,
+           gstTotal: bill.gstTotal,
+           paymentMode: bill.paymentMode,
+           customerName: bill.customerName,
+           // billedBy is not yet stored on the Bill entity; null is intentional
+           // and consistent with syncPendingBills() until user-system integration.
+           billedBy: null,
+           items: _billItemsPayload(bill.items),
+           createdAt: bill.createdAt,
+         ).then((ok) => debugPrint(
+             '[saveBill] direct sync fallback: ${ok ? "succeeded" : "failed"}'));
        }),
     );
+
+    // Enqueue the matching erp_transaction for cloud sync so the Supabase
+    // transactions_sync table stays in step with bills_sync.
+    // Requires Supabase table: transactions_sync with UNIQUE(license_id, local_tx_id).
+    //
+    // ledgerTxId is null only if the entire db.transaction() threw an exception,
+    // which would have propagated before reaching this line.  The null check is
+    // purely defensive: if somehow the assignment was skipped we skip the enqueue
+    // rather than passing an invalid id.
+    if (ledgerTxId != null) {
+      unawaited(
+        SyncService.instance.enqueue(
+          tableName: 'transactions_sync',
+          recordId: ledgerTxId.toString(),
+          operation: SyncOperation.create,
+          payload: {
+            'local_tx_id': ledgerTxId,
+            'bill_id': bill.id,
+            'bill_number': bill.billNumber,
+            'type': 'sale',
+            'total_amount': bill.totalAmount,
+            'tags': jsonEncode({
+              'bill_number': bill.billNumber,
+              'bill_id': bill.id,
+              'customer_name': bill.customerName,
+              'payment_mode': bill.paymentMode,
+              'discount_amount': bill.discountAmount,
+            }),
+            'created_at': bill.createdAt.toIso8601String(),
+          },
+        ).then((_) => debugPrint('[saveBill] transactions_sync queued'))
+         .catchError((Object e) {
+           debugPrint('[saveBill] transactions_sync enqueue failed (non-fatal): $e');
+         }),
+      );
+    }
 
     debugPrint('[saveBill] completed: bill #${bill.billNumber}');
     return bill;
