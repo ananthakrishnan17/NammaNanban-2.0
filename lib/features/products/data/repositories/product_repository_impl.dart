@@ -1,6 +1,9 @@
+import 'dart:async' show unawaited;
 import 'package:flutter/foundation.dart';
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
+import '../../../../core/sync/sync_service.dart';
+import '../../../../core/sync/sync_status.dart';
 import '../../domain/entities/product.dart';
 import '../../../users/domain/entities/product_uom.dart';
 
@@ -121,17 +124,62 @@ class ProductRepositoryImpl implements ProductRepository {
       }
     }
 
+    // Enqueue product for cloud sync (no-op for offline licenses).
+    debugPrint('[ProductRepository] enqueuing addProduct id=$productId for sync');
+    unawaited(
+      SyncService.instance.enqueue(
+        tableName: 'products_sync',
+        recordId: productId.toString(),
+        operation: SyncOperation.create,
+        payload: _buildProductSyncPayload(product, productId),
+      ).catchError((Object e) {
+        debugPrint('[ProductRepository] sync enqueue failed (non-fatal): $e');
+      }),
+    );
+
     return productId;
   }
 
   @override Future<bool> updateProduct(Product product) async {
     final db = await _dbHelper.database;
-    return (await db.update('products', (product as ProductModel).toMap(), where: 'id=?', whereArgs: [product.id])) > 0;
+    final updated = (await db.update('products', (product as ProductModel).toMap(), where: 'id=?', whereArgs: [product.id])) > 0;
+    if (updated) {
+      debugPrint('[ProductRepository] enqueuing updateProduct id=${product.id} for sync');
+      unawaited(
+        SyncService.instance.enqueue(
+          tableName: 'products_sync',
+          recordId: product.id.toString(),
+          operation: SyncOperation.update,
+          payload: _buildProductSyncPayload(product, product.id!),
+        ).catchError((Object e) {
+          debugPrint('[ProductRepository] sync enqueue failed (non-fatal): $e');
+        }),
+      );
+    }
+    return updated;
   }
 
   @override Future<bool> deleteProduct(int id) async {
     final db = await _dbHelper.database;
-    return (await db.update('products', {'is_active': 0, 'updated_at': DateTime.now().toIso8601String()}, where: 'id=?', whereArgs: [id])) > 0;
+    final updated = (await db.update('products', {'is_active': 0, 'updated_at': DateTime.now().toIso8601String()}, where: 'id=?', whereArgs: [id])) > 0;
+    if (updated) {
+      debugPrint('[ProductRepository] enqueuing deleteProduct id=$id for sync');
+      unawaited(
+        SyncService.instance.enqueue(
+          tableName: 'products_sync',
+          recordId: id.toString(),
+          operation: SyncOperation.delete,
+          payload: {
+            'local_product_id': id,
+            'is_active': 0,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+        ).catchError((Object e) {
+          debugPrint('[ProductRepository] sync enqueue failed (non-fatal): $e');
+        }),
+      );
+    }
+    return updated;
   }
 
   @override Future<bool> updateStock(int productId, double quantityChange) async {
@@ -259,4 +307,23 @@ class ProductRepositoryImpl implements ProductRepository {
     final db = await _dbHelper.database;
     return (await db.delete('product_uoms', where: 'id = ?', whereArgs: [id])) > 0;
   }
+
+  /// Builds a consistent payload map for syncing a product to Supabase.
+  Map<String, dynamic> _buildProductSyncPayload(Product product, int productId) => {
+    'local_product_id': productId,
+    'name': product.name,
+    'category_name': product.categoryName,
+    'brand_name': product.brandName,
+    'purchase_price': product.purchasePrice,
+    'selling_price': product.sellingPrice,
+    'wholesale_price': product.wholesalePrice,
+    'stock_quantity': product.stockQuantity,
+    'unit': product.unit,
+    'gst_rate': product.gstRate,
+    'hsn_code': product.hsnCode,
+    'barcode': product.barcode,
+    'is_active': product.isActive ? 1 : 0,
+    'created_at': product.createdAt.toIso8601String(),
+    'updated_at': product.updatedAt.toIso8601String(),
+  };
 }
