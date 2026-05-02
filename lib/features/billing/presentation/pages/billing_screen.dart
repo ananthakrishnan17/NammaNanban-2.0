@@ -143,7 +143,11 @@ class _BillingScreenState extends State<BillingScreen> {
                     child: AddEditProductPage(initialBarcode: barcode),
                   ),
                 ),
-              );
+              ).then((_) {
+                // Reload the product list after returning so the new product
+                // is immediately available in the billing grid.
+                if (mounted) context.read<ProductBloc>().add(LoadProducts());
+              });
             },
             child: const Text('Create Product'),
           ),

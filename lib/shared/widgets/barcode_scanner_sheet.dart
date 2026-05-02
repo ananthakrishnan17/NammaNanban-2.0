@@ -89,12 +89,12 @@ class _BarcodeScannerSheetState extends State<BarcodeScannerSheet> {
               },
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16.h),
           const Text(
             'Point camera at a barcode',
             style: TextStyle(color: Colors.white60, fontSize: 13),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12.h),
         ],
       ),
     );
