@@ -46,30 +46,53 @@ class SyncWorker {
 
   /// Run the worker. Safe to call multiple times — only one run at a time.
   Future<void> run(LicenseRepository licenseRepository) async {
-    if (_isRunning) return;
+    if (_isRunning) {
+      debugPrint('[SyncWorker] already running — skipped');
+      return;
+    }
     _isRunning = true;
+    debugPrint('[SyncWorker] started');
     try {
       final license = await licenseRepository.getCachedLicense();
-      if (license == null || !license.isValid) return;
+      if (license == null || !license.isValid) {
+        debugPrint('[SyncWorker] no valid license — aborting');
+        return;
+      }
       // Only sync for online license
-      if (license.licenseType != LicenseType.online) return;
+      if (license.licenseType != LicenseType.online) {
+        debugPrint('[SyncWorker] offline license — no cloud sync');
+        return;
+      }
 
       final pending = await SyncQueueRepository.instance.getPending();
+      debugPrint('[SyncWorker] ${pending.length} item(s) pending');
+      int synced = 0;
+      int failed = 0;
+      int skipped = 0;
       for (final item in pending) {
         // Skip items that have permanently exhausted their retries.
         // They remain in the queue as "failed" so the user can see them.
-        if (item.retryCount >= _maxRetries) continue;
-        await _processItem(item, license.id);
+        if (item.retryCount >= _maxRetries) {
+          debugPrint('[SyncWorker] skipping ${item.tableName}/${item.recordId} '
+              '(retries exhausted: ${item.retryCount}/$_maxRetries)');
+          skipped++;
+          continue;
+        }
+        final ok = await _processItem(item, license.id);
+        if (ok) synced++; else failed++;
       }
       await SyncQueueRepository.instance.deleteSynced();
+      debugPrint('[SyncWorker] done — synced=$synced failed=$failed skipped=$skipped');
     } finally {
       _isRunning = false;
     }
   }
 
-  Future<void> _processItem(SyncQueueItem item, String licenseId) async {
+  Future<bool> _processItem(SyncQueueItem item, String licenseId) async {
     final id = item.id!;
     try {
+      debugPrint('[SyncWorker] syncing ${item.tableName}/${item.recordId} '
+          '(attempt ${item.retryCount + 1}/$_maxRetries)');
       await SyncQueueRepository.instance.updateStatus(id, SyncStatus.syncing);
 
       // Merge license_id into the payload last so it cannot be overridden by
@@ -105,9 +128,11 @@ class SyncWorker {
       }
 
       await SyncQueueRepository.instance.updateStatus(id, SyncStatus.synced);
+      debugPrint('[SyncWorker] ✓ synced ${item.tableName}/${item.recordId}');
+      return true;
     } catch (e) {
-      debugPrint('[SyncWorker] Failed to sync item ${item.id} '
-          '(${item.tableName}/${item.recordId}): $e');
+      debugPrint('[SyncWorker] ✗ failed ${item.tableName}/${item.recordId} '
+          '(retry ${item.retryCount + 1}/$_maxRetries): $e');
       // Increment retryCount.  If it reaches _maxRetries the item will be
       // skipped on the next run but kept in the queue as "failed" for
       // visibility.  Re-enqueueing the record (e.g. after a user edit) resets
@@ -117,6 +142,7 @@ class SyncWorker {
         SyncStatus.failed,
         retryCount: item.retryCount + 1,
       );
+      return false;
     }
   }
 
@@ -125,6 +151,13 @@ class SyncWorker {
   /// The key must match a UNIQUE constraint defined in the Supabase schema.
   /// Using a composite key that includes `license_id` prevents cross-tenant
   /// conflicts when multiple businesses share the same Supabase project.
+  ///
+  /// Supabase schema requirements per table:
+  ///   bills_sync        — UNIQUE(license_id, local_bill_id)
+  ///   products_sync     — UNIQUE(license_id, local_product_id)
+  ///   expenses_sync     — UNIQUE(license_id, local_expense_id)
+  ///   purchases_sync    — UNIQUE(license_id, local_purchase_id)
+  ///   transactions_sync — UNIQUE(license_id, local_tx_id)
   String _conflictKey(String tableName) {
     switch (tableName) {
       case 'bills_sync':
@@ -135,6 +168,8 @@ class SyncWorker {
         return 'license_id, local_expense_id';
       case 'purchases_sync':
         return 'license_id, local_purchase_id';
+      case 'transactions_sync':
+        return 'license_id, local_tx_id';
       default:
         return 'id';
     }
