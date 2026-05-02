@@ -56,6 +56,9 @@ class _AddPurchasePageState extends State<AddPurchasePage> {
           // Reset flag before popping so the widget is in a clean state if
           // the user navigates back to this page in the same session.
           setState(() => _isSaving = false);
+          // Refresh ProductBloc so the billing/products screens immediately
+          // reflect the updated stock_quantity written by savePurchase().
+          ctx.read<ProductBloc>().add(LoadProducts());
           ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
               content: Text('Purchase saved! Stock updated.'),
               backgroundColor: AppTheme.accent));

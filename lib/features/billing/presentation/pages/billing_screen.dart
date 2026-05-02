@@ -38,6 +38,19 @@ class _BillingScreenState extends State<BillingScreen> {
   bool _showCart = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Always load fresh stock when the billing screen is entered so that
+    // purchases or stock adjustments made on other screens are reflected
+    // immediately without requiring a full app restart.
+    // Post-frame callback ensures the widget is fully mounted before reading
+    // the inherited BLoC from context.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<ProductBloc>().add(LoadProducts());
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
