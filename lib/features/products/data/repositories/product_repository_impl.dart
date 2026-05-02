@@ -1,5 +1,5 @@
 import 'dart:async' show unawaited;
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' hide Category;
 import '../../../../core/database/database_helper.dart';
 import '../../../../core/ledger/ledger_service.dart';
 import '../../../../core/sync/sync_service.dart';
