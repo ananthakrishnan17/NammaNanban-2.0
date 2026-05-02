@@ -10,6 +10,24 @@ import 'connectivity_service.dart';
 ///
 /// - Offline license: no background sync — data stays local.
 /// - Online license: enqueue changes and process on network availability.
+///
+/// ## Conflict resolution
+/// Each enqueued change is enriched with two fields before it is forwarded to
+/// [SyncQueueRepository.enqueue]:
+///
+/// * `updated_at` — ISO-8601 wall-clock timestamp of the write on this device.
+///   The Supabase schema uses this for last-write-wins (LWW): a server-side
+///   trigger rejects incoming upserts whose `updated_at` is older than the
+///   existing row's value, so the most recent edit always wins regardless of
+///   which device syncs first.
+///
+/// * `device_id` — stable identifier of this device, stored both as a
+///   first-class column in sync_queue and inside the payload forwarded to
+///   Supabase, enabling multi-device conflict auditing.
+///
+/// The [SyncQueueRepository] ensures there is at most one pending row per
+/// (table_name, record_id) at any time, so rapid offline edits do not pile up
+/// into duplicate sync requests.
 class SyncService {
   static final SyncService instance = SyncService._();
   SyncService._();
@@ -41,13 +59,15 @@ class SyncService {
     final license = await _licenseRepository?.getCachedLicense();
     if (license == null || license.licenseType != LicenseType.online) return;
 
+    final now = DateTime.now().toIso8601String();
+
     // Enrich payload with device context for last-write-wins conflict resolution.
     // updated_at lets the Supabase upsert determine which write is newer.
     // device_id helps trace which device originated the change.
     final enrichedPayload = {
       ...payload,
       'device_id': license.deviceId,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': now,
     };
 
     await SyncQueueRepository.instance.enqueue(
@@ -55,6 +75,9 @@ class SyncService {
       recordId: recordId,
       operation: operation,
       payload: enrichedPayload,
+      // Also stored as a first-class column for diagnostics without decoding
+      // the payload JSON.
+      deviceId: license.deviceId,
     );
 
     // Try to sync immediately if online
