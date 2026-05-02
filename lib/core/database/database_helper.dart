@@ -20,6 +20,7 @@ import 'package:sqflite/sqflite.dart';
 ///   v16     updated_at on sync_queue for last-write-wins tracking
 ///   v17     snapshot_json on bills (immutable JSON bill snapshot for rendering)
 ///   v18     device_id on sync_queue for multi-device conflict auditing
+///   v19     updated_at on batches for last-write-wins sync tracking
 ///
 /// All legacy tables are kept intact so existing devices continue to work
 /// during the migration period. They will be dropped in Phase 4 cutover.
@@ -39,11 +40,12 @@ class DatabaseHelper {
     final path = join(dbPath, filePath);
     return await openDatabase(
       path,
-      version: 18, // v14: direction on ledger_entries + sale_return_items conversion cols
+      version: 19, // v14: direction on ledger_entries + sale_return_items conversion cols
                    // v15: day_close table for EOD settlement + batches table
                    // v16: updated_at on sync_queue for last-write-wins tracking
                    // v17: snapshot_json on bills for immutable bill rendering snapshot
                    // v18: device_id on sync_queue for multi-device conflict auditing
+                   // v19: updated_at on batches for last-write-wins sync tracking
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
@@ -422,7 +424,8 @@ class DatabaseHelper {
         qty_in       REAL NOT NULL DEFAULT 0.0,
         qty_remaining REAL NOT NULL DEFAULT 0.0,
         unit_cost    REAL NOT NULL DEFAULT 0.0,
-        created_at   TEXT NOT NULL)''');
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT)''');
     } catch (_) {}
   }
 
@@ -611,7 +614,8 @@ class DatabaseHelper {
           qty_in        REAL NOT NULL DEFAULT 0.0,
           qty_remaining REAL NOT NULL DEFAULT 0.0,
           unit_cost     REAL NOT NULL DEFAULT 0.0,
-          created_at    TEXT NOT NULL)''');
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT)''');
       } catch (_) {}
     }
 
@@ -631,6 +635,14 @@ class DatabaseHelper {
     // conflict resolution queries across devices.
     if (oldVersion < 18) {
       try { await db.execute('ALTER TABLE sync_queue ADD COLUMN device_id TEXT'); } catch (_) {}
+    }
+
+    // ── v19 — updated_at on batches for last-write-wins sync tracking ─────
+    // Without this timestamp the sync worker cannot apply LWW when a batch
+    // row is updated (e.g. qty_remaining changes after a sale or return).
+    // The column is nullable so existing rows remain valid after migration.
+    if (oldVersion < 19) {
+      try { await db.execute('ALTER TABLE batches ADD COLUMN updated_at TEXT'); } catch (_) {}
     }
 
     await _seed(db, now);

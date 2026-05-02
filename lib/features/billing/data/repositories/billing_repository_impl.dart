@@ -231,8 +231,8 @@ class BillingRepositoryImpl implements BillingRepository {
             final batchQty = (batch['qty_remaining'] as num).toDouble();
             final deduct = remaining < batchQty ? remaining : batchQty;
             await txn.rawUpdate(
-              'UPDATE batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
-              [deduct, batchId],
+              'UPDATE batches SET qty_remaining = qty_remaining - ?, updated_at = ? WHERE id = ?',
+              [deduct, nowStr, batchId],
             );
             remaining -= deduct;
           }

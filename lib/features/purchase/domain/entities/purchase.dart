@@ -183,6 +183,7 @@ class PurchaseRepository {
           'qty_remaining': stockIncrement,
           'unit_cost': item.unitCost,
           'created_at': nowStr,
+          'updated_at': nowStr,
         });
 
         // Record base qty for this line; index matches purchaseItems list below
