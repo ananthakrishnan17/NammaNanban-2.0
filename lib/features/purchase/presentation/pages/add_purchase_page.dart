@@ -493,7 +493,8 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                 final uomUnit = _selectedUom != null
                     ? _selectedUom!['uom_name'] as String
                     : (_selected!.wholesaleToRetailQty > 1.0 ? _selected!.wholesaleUnit : _selected!.unit);
-                final batchNum = _batchNumCtrl.text.trim().isEmpty ? null : _batchNumCtrl.text.trim();
+                final batchNumTrimmed = _batchNumCtrl.text.trim();
+                final batchNum = batchNumTrimmed.isEmpty ? null : batchNumTrimmed;
                 widget.onItemAdded(PurchaseCartItem(
                     productId: _selected!.id!, productName: _selected!.name,
                     unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate,

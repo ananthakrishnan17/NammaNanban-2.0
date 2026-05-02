@@ -174,7 +174,7 @@ class BillingRepositoryImpl implements BillingRepository {
         // 4. Deduct from each batch in FEFO order until qty is fully covered.
         // 5. Always update the aggregate products.stock_quantity for backward
         //    compatibility with reports and stock display.
-        final today = nowStr.substring(0, 10); // 'YYYY-MM-DD'
+        final todayDate = DateTime(now.year, now.month, now.day); // midnight today
         final batchRows = await txn.rawQuery('''
           SELECT id, qty_remaining, expiry_date
           FROM batches
@@ -185,16 +185,22 @@ class BillingRepositoryImpl implements BillingRepository {
         ''', [cartItem.productId]);
 
         if (batchRows.isNotEmpty) {
+          // Parse expiry_date ('YYYY-MM-DD') to DateTime for reliable comparison.
+          DateTime? parseExpiry(String? raw) {
+            if (raw == null) return null;
+            try { return DateTime.parse(raw); } catch (_) { return null; }
+          }
+
           // Separate expired from sellable batches
           final sellable = batchRows.where((b) {
-            final exp = b['expiry_date'] as String?;
+            final exp = parseExpiry(b['expiry_date'] as String?);
             // Allow null expiry (non-perishable). Block if expiry is in the past.
-            return exp == null || exp >= today;
+            return exp == null || !exp.isBefore(todayDate);
           }).toList();
 
           final expired = batchRows.where((b) {
-            final exp = b['expiry_date'] as String?;
-            return exp != null && exp < today;
+            final exp = parseExpiry(b['expiry_date'] as String?);
+            return exp != null && exp.isBefore(todayDate);
           }).toList();
 
           if (expired.isNotEmpty && sellable.isEmpty) {
