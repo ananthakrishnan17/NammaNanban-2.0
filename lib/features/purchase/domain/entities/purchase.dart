@@ -134,11 +134,15 @@ class PurchaseRepository {
       });
 
       final purchaseItems = <PurchaseItem>[];
-      // Tracks the stock increment (in base units) for each product.
-      // Used twice: (1) directly in per-item ledger debit entries, and
-      // (2) as the aggregate quantity if debit entries need consolidation
-      // to eliminate GST-rounding drift against the credit total.
-      final Map<int, double> productBaseQtyMap = {};
+      // Tracks the stock increment (in base units) per purchase line, indexed
+      // by position in purchaseItems.  Using a List (not a Map keyed by
+      // productId) ensures correctness when the same product appears more than
+      // once — e.g. two separate batches of the same item in a single invoice.
+      // This list is used to set the quantityChange on each ledger debit entry
+      // and to compute the aggregate quantity for the consolidated debit when
+      // GST rounding causes a drift between the per-item debit sum and the
+      // invoice credit total.
+      final List<double> itemBaseQties = [];
 
       for (final item in items) {
         final itemId = await txn.insert('purchase_items', {
@@ -159,14 +163,17 @@ class PurchaseRepository {
             : item.quantity;
         await txn.rawUpdate('UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = ? WHERE id = ?',
             [stockIncrement, nowStr, item.productId]);
-        // Update purchase price
+        // Update purchase price to the latest cost for this product
         await txn.rawUpdate('UPDATE products SET purchase_price = ?, updated_at = ? WHERE id = ?',
             [item.unitCost, nowStr, item.productId]);
 
         // ── Batch entry for FEFO tracking ─────────────────────────────────
-        // Each purchase line creates one batch row.  Billing will drain
-        // qty_remaining from the batch with the earliest expiry_date first
-        // (FEFO). Storing unit_cost here enables accurate COGS per batch.
+        // Each purchase line creates exactly one new batch row — batches are
+        // NEVER merged automatically even when the same product is purchased
+        // multiple times in a single invoice (e.g. different batch numbers or
+        // expiry dates).  Billing drains qty_remaining from the batch with the
+        // earliest expiry_date first (FEFO).  Storing unit_cost per batch
+        // enables accurate cost-of-goods-sold (COGS) calculation at sale time.
         await txn.insert('batches', {
           'product_id': item.productId,
           'purchase_id': purchaseId,
@@ -176,9 +183,11 @@ class PurchaseRepository {
           'qty_remaining': stockIncrement,
           'unit_cost': item.unitCost,
           'created_at': nowStr,
+          'updated_at': nowStr,
         });
 
-        productBaseQtyMap[item.productId] = stockIncrement;
+        // Record base qty for this line; index matches purchaseItems list below
+        itemBaseQties.add(stockIncrement);
         purchaseItems.add(PurchaseItem(id: itemId, purchaseId: purchaseId,
             productId: item.productId, productName: item.productName,
             quantity: item.quantity, unit: item.unit, unitCost: item.unitCost,
@@ -191,18 +200,20 @@ class PurchaseRepository {
       //   CR Asset/Liability   total (cash paid or credit payable)
       //
       // ATOMICITY: no try/catch — ledger failure rolls back the whole
-      // transaction (purchase record + items + stock updates).
+      // transaction (purchase record + items + stock updates + batches).
       final ledger = LedgerService.instance;
       final creditType = paymentMode == 'credit' ? 'liability' : 'asset';
 
-      // Build per-item debit entries; if their sum mismatches total (GST
-      // rounding), collapse into a single consolidated debit for balance.
+      // Build per-item debit entries using per-line base quantities so that
+      // duplicate products (different batches) each get the correct quantity.
+      // If the debit sum mismatches total due to GST rounding, collapse into a
+      // single consolidated debit for balance.
       final ledgerEntries = <LedgerEntryInput>[];
-      for (final pi in purchaseItems) {
+      for (int i = 0; i < purchaseItems.length; i++) {
         ledgerEntries.add(LedgerEntryInput(
           accountType: 'inventory', direction: 'debit',
-          amount: pi.totalCost,
-          quantityChange: productBaseQtyMap[pi.productId],
+          amount: purchaseItems[i].totalCost,
+          quantityChange: itemBaseQties[i],
         ));
       }
       // CR asset/liability = full invoice total
@@ -215,8 +226,7 @@ class PurchaseRepository {
           .where((e) => e.direction == 'debit')
           .fold(0.0, (s, e) => s + e.amount);
       if ((debitSum - total).abs() > 0.005) {
-        final totalBaseQty =
-            productBaseQtyMap.values.fold(0.0, (s, q) => s + q);
+        final totalBaseQty = itemBaseQties.fold(0.0, (s, q) => s + q);
         ledgerEntries.removeWhere((e) => e.direction == 'debit');
         ledgerEntries.add(LedgerEntryInput(
           accountType: 'inventory', direction: 'debit',
