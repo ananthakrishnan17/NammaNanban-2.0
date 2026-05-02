@@ -300,10 +300,21 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
   Product? _selected;
   final _qtyCtrl = TextEditingController(text: '1');
   final _costCtrl = TextEditingController();
+  final _batchNumCtrl = TextEditingController();
   double _gstRate = 0;
   String _searchQ = '';
   List<Map<String, dynamic>> _purchaseUoms = [];
   Map<String, dynamic>? _selectedUom;
+  // Optional expiry date for FEFO batch tracking
+  DateTime? _expiryDate;
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    _costCtrl.dispose();
+    _batchNumCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _loadPurchaseUoms(int productId) async {
     final db = await DatabaseHelper.instance.database;
@@ -353,6 +364,8 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                 _gstRate = filtered[i].gstRate;
                 _purchaseUoms = [];
                 _selectedUom = null;
+                _expiryDate = null;
+                _batchNumCtrl.clear();
               });
               _loadPurchaseUoms(filtered[i].id!);
             },
@@ -360,7 +373,8 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
         )
             : Padding(
           padding: EdgeInsets.all(16.w),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: Text(_selected!.name, style: AppTheme.heading2)),
               TextButton(onPressed: () => setState(() => _selected = null), child: const Text('Change')),
@@ -424,6 +438,53 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
               items: [0.0, 5.0, 12.0, 18.0, 28.0].map((r) => DropdownMenuItem(value: r, child: Text('${r.toStringAsFixed(0)}%'))).toList(),
               onChanged: (v) => setState(() => _gstRate = v ?? 0),
             ),
+            SizedBox(height: 10.h),
+            // ── Batch tracking fields (optional) ──────────────────────────
+            // These create a batches row so billing can apply FEFO later.
+            TextField(
+              controller: _batchNumCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Batch No. (optional)',
+                prefixIcon: Icon(Icons.tag),
+              ),
+            ),
+            SizedBox(height: 10.h),
+            // Expiry date picker — tap to open calendar
+            GestureDetector(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _expiryDate ?? DateTime.now().add(const Duration(days: 180)),
+                  firstDate: DateTime.now(),
+                  lastDate: DateTime(2100),
+                );
+                if (picked != null) setState(() => _expiryDate = picked);
+              },
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(8.r),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 18),
+                  SizedBox(width: 10.w),
+                  Text(
+                    _expiryDate == null
+                        ? 'Expiry Date (optional)'
+                        : 'Expires: ${DateFormat('dd MMM yyyy').format(_expiryDate!)}',
+                    style: _expiryDate == null ? AppTheme.caption : AppTheme.body,
+                  ),
+                  const Spacer(),
+                  if (_expiryDate != null)
+                    GestureDetector(
+                      onTap: () => setState(() => _expiryDate = null),
+                      child: const Icon(Icons.clear, size: 16, color: AppTheme.textSecondary),
+                    ),
+                ]),
+              ),
+            ),
             SizedBox(height: 16.h),
             ElevatedButton(
               onPressed: () {
@@ -432,13 +493,17 @@ class _ProductPickerForPurchaseState extends State<_ProductPickerForPurchase> {
                 final uomUnit = _selectedUom != null
                     ? _selectedUom!['uom_name'] as String
                     : (_selected!.wholesaleToRetailQty > 1.0 ? _selected!.wholesaleUnit : _selected!.unit);
+                final batchNumTrimmed = _batchNumCtrl.text.trim();
+                final batchNum = batchNumTrimmed.isEmpty ? null : batchNumTrimmed;
                 widget.onItemAdded(PurchaseCartItem(
                     productId: _selected!.id!, productName: _selected!.name,
-                    unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate));
+                    unit: uomUnit, quantity: qty, unitCost: cost, gstRate: _gstRate,
+                    batchNumber: batchNum, expiryDate: _expiryDate));
               },
               child: const Text('Add to Purchase'),
             ),
           ]),
+          ),
         ),
         ),
       ]),
