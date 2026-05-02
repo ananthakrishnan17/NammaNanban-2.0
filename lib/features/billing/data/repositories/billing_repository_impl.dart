@@ -155,7 +155,7 @@ class BillingRepositoryImpl implements BillingRepository {
         });
         debugPrint('[saveBill] item inserted: id=$itemId, product=${cartItem.productName}');
 
-        // ── Step 3: Deduct stock ───────────────────────────────────────
+        // ── Step 3: Deduct stock (FEFO batch-wise) ────────────────────────
         // Wholesale items deduct wholesaleToRetailQty per unit (base UOM).
         final double baseQtyToDeduct;
         if (cartItem.saleType == SaleType.wholesale && cartItem.wholesaleToRetailQty > 1.0) {
@@ -163,6 +163,77 @@ class BillingRepositoryImpl implements BillingRepository {
         } else {
           baseQtyToDeduct = cartItem.quantity * cartItem.conversionQty;
         }
+
+        // ── FEFO: drain qty_remaining from batches in expiry_date ASC order ──
+        // 1. Fetch all batches with remaining stock, sorted by earliest expiry
+        //    (nulls last — batches without expiry are treated as non-perishable
+        //    and are used after all dated batches).
+        // 2. Reject expired batches (expiry_date < today).
+        // 3. If the product has batch records and total available is less than
+        //    required, abort the transaction with an informative error.
+        // 4. Deduct from each batch in FEFO order until qty is fully covered.
+        // 5. Always update the aggregate products.stock_quantity for backward
+        //    compatibility with reports and stock display.
+        final today = nowStr.substring(0, 10); // 'YYYY-MM-DD'
+        final batchRows = await txn.rawQuery('''
+          SELECT id, qty_remaining, expiry_date
+          FROM batches
+          WHERE product_id = ? AND qty_remaining > 0
+          ORDER BY
+            CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+            expiry_date ASC
+        ''', [cartItem.productId]);
+
+        if (batchRows.isNotEmpty) {
+          // Separate expired from sellable batches
+          final sellable = batchRows.where((b) {
+            final exp = b['expiry_date'] as String?;
+            // Allow null expiry (non-perishable). Block if expiry is in the past.
+            return exp == null || exp >= today;
+          }).toList();
+
+          final expired = batchRows.where((b) {
+            final exp = b['expiry_date'] as String?;
+            return exp != null && exp < today;
+          }).toList();
+
+          if (expired.isNotEmpty && sellable.isEmpty) {
+            // All remaining stock is from expired batches — block the sale.
+            throw Exception(
+              '${cartItem.productName}: all remaining stock is expired. '
+              'Please remove expired batches before selling.',
+            );
+          }
+
+          // Total available stock across non-expired batches
+          final availableQty = sellable.fold(
+            0.0, (s, b) => s + (b['qty_remaining'] as num).toDouble());
+
+          if (availableQty < baseQtyToDeduct) {
+            throw Exception(
+              'Insufficient stock for ${cartItem.productName}. '
+              'Available: ${availableQty.toStringAsFixed(2)}, '
+              'Required: ${baseQtyToDeduct.toStringAsFixed(2)}.',
+            );
+          }
+
+          // Drain batches in FEFO order
+          double remaining = baseQtyToDeduct;
+          for (final batch in sellable) {
+            if (remaining <= 0) break;
+            final batchId = batch['id'] as int;
+            final batchQty = (batch['qty_remaining'] as num).toDouble();
+            final deduct = remaining < batchQty ? remaining : batchQty;
+            await txn.rawUpdate(
+              'UPDATE batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+              [deduct, batchId],
+            );
+            remaining -= deduct;
+          }
+          debugPrint('[saveBill] FEFO deducted batches for product=${cartItem.productId}, qty=$baseQtyToDeduct');
+        }
+
+        // Always update the aggregate product stock (used by UI + reports)
         await txn.rawUpdate(
             'UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = ? WHERE id = ?',
             [baseQtyToDeduct, nowStr, cartItem.productId]);

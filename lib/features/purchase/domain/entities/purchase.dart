@@ -81,9 +81,14 @@ class PurchaseCartItem {
   double quantity;
   double unitCost;
   double gstRate;
+  // Batch tracking fields — used to create a batches row on save so that
+  // billing can apply FEFO (First Expiry First Out) during stock deduction.
+  final String? batchNumber;
+  final DateTime? expiryDate;
 
   PurchaseCartItem({required this.productId, required this.productName,
-    required this.unit, this.quantity = 1, required this.unitCost, this.gstRate = 0});
+    required this.unit, this.quantity = 1, required this.unitCost, this.gstRate = 0,
+    this.batchNumber, this.expiryDate});
 
   double get gstAmount => unitCost * quantity * gstRate / 100;
   double get totalCost => unitCost * quantity + gstAmount;
@@ -157,6 +162,21 @@ class PurchaseRepository {
         // Update purchase price
         await txn.rawUpdate('UPDATE products SET purchase_price = ?, updated_at = ? WHERE id = ?',
             [item.unitCost, nowStr, item.productId]);
+
+        // ── Batch entry for FEFO tracking ─────────────────────────────────
+        // Each purchase line creates one batch row.  Billing will drain
+        // qty_remaining from the batch with the earliest expiry_date first
+        // (FEFO). Storing unit_cost here enables accurate COGS per batch.
+        await txn.insert('batches', {
+          'product_id': item.productId,
+          'purchase_id': purchaseId,
+          'batch_number': item.batchNumber,
+          'expiry_date': item.expiryDate?.toIso8601String().substring(0, 10),
+          'qty_in': stockIncrement,
+          'qty_remaining': stockIncrement,
+          'unit_cost': item.unitCost,
+          'created_at': nowStr,
+        });
 
         productBaseQtyMap[item.productId] = stockIncrement;
         purchaseItems.add(PurchaseItem(id: itemId, purchaseId: purchaseId,
