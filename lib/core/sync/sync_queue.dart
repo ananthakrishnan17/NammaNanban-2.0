@@ -74,7 +74,7 @@ class SyncQueueItem {
         retryCount: m['retry_count'] as int? ?? 0,
         updatedAt: m['updated_at'] != null
             ? DateTime.parse(m['updated_at'] as String)
-            : null,
+            : DateTime.parse(m['created_at'] as String),
         deviceId: m['device_id'] as String?,
       );
 
