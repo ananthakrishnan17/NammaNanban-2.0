@@ -129,7 +129,10 @@ class PurchaseRepository {
       });
 
       final purchaseItems = <PurchaseItem>[];
-      // Collect base quantities for the consolidated ledger entry
+      // Tracks the stock increment (in base units) for each product.
+      // Used twice: (1) directly in per-item ledger debit entries, and
+      // (2) as the aggregate quantity if debit entries need consolidation
+      // to eliminate GST-rounding drift against the credit total.
       final Map<int, double> productBaseQtyMap = {};
 
       for (final item in items) {

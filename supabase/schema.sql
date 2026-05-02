@@ -418,6 +418,9 @@ ALTER TABLE products_sync
 
 -- ── ledger_entries — add direction column (parity with SQLite v14) ────────
 -- direction TEXT: 'debit' | 'credit' — explicit bookkeeping direction.
+-- DEFAULT 'debit' is intentional to keep existing rows valid after the
+-- migration, but the application layer always passes direction explicitly;
+-- the default is never relied on for new inserts.
 -- Safe to apply even if already present (IF NOT EXISTS on ALTER TABLE).
 ALTER TABLE ledger_entries
   ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'debit'

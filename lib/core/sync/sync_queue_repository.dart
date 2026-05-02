@@ -19,48 +19,50 @@ class SyncQueueRepository {
     final db = await DatabaseHelper.instance.database;
     final now = DateTime.now().toIso8601String();
 
-    // Dedup: if a pending/failed entry already exists for this record, update
-    // its payload and reset it to pending instead of inserting a duplicate.
-    // This prevents accumulating multiple rows for the same record on retries.
-    final existing = await db.query(
-      'sync_queue',
-      where: 'table_name = ? AND record_id = ? AND (status = ? OR status = ?)',
-      whereArgs: [
-        tableName,
-        recordId,
-        SyncStatus.pending.value,
-        SyncStatus.failed.value,
-      ],
-      limit: 1,
-    );
-
-    if (existing.isNotEmpty) {
-      await db.update(
+    // Atomic check-and-upsert: wrap in a transaction so that two concurrent
+    // enqueue calls for the same record cannot both pass the duplicate check
+    // and insert separate rows.
+    await db.transaction((txn) async {
+      final existing = await txn.query(
         'sync_queue',
-        {
-          'payload': jsonEncode(payload),
-          'operation': operation.value,
-          'status': SyncStatus.pending.value,
-          'retry_count': 0,
-          'updated_at': now,
-        },
-        where: 'id = ?',
-        whereArgs: [existing.first['id']],
+        where: 'table_name = ? AND record_id = ? AND (status = ? OR status = ?)',
+        whereArgs: [
+          tableName,
+          recordId,
+          SyncStatus.pending.value,
+          SyncStatus.failed.value,
+        ],
+        limit: 1,
       );
-      return;
-    }
 
-    final item = SyncQueueItem(
-      tableName: tableName,
-      recordId: recordId,
-      operation: operation,
-      payload: payload,
-      status: SyncStatus.pending,
-      createdAt: DateTime.now(),
-    );
-    await db.insert('sync_queue', {
-      ...item.toMap(),
-      'updated_at': now,
+      if (existing.isNotEmpty) {
+        // Update payload + reset to pending so the latest data is synced.
+        await txn.update(
+          'sync_queue',
+          {
+            'payload': jsonEncode(payload),
+            'operation': operation.value,
+            'status': SyncStatus.pending.value,
+            'retry_count': 0,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [existing.first['id']],
+        );
+      } else {
+        final item = SyncQueueItem(
+          tableName: tableName,
+          recordId: recordId,
+          operation: operation,
+          payload: payload,
+          status: SyncStatus.pending,
+          createdAt: DateTime.now(),
+        );
+        await txn.insert('sync_queue', {
+          ...item.toMap(),
+          'updated_at': now,
+        });
+      }
     });
   }
 
