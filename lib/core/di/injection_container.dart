@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:get_it/get_it.dart';
 import '../../features/users/domain/entities/app_user.dart';
@@ -68,4 +70,7 @@ Future<void> init() async {
   // Sync — init connectivity and wire sync service
   await ConnectivityService.instance.init();
   SyncService.instance.init(sl<LicenseRepository>());
+  // Flush any items that were queued during a previous offline session.
+  // Fire-and-forget: a failure here must never block app startup.
+  unawaited(SyncService.instance.syncNow());
 }

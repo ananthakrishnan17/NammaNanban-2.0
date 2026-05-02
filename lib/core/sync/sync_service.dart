@@ -57,7 +57,16 @@ class SyncService {
     required Map<String, dynamic> payload,
   }) async {
     final license = await _licenseRepository?.getCachedLicense();
-    if (license == null || license.licenseType != LicenseType.online) return;
+    if (license == null) {
+      debugPrint('[SyncService] enqueue skipped ($tableName/$recordId): '
+          'no cached license — activate a license first');
+      return;
+    }
+    if (license.licenseType != LicenseType.online) {
+      debugPrint('[SyncService] enqueue skipped ($tableName/$recordId): '
+          'license is ${license.licenseType.value} — only online licenses sync to cloud');
+      return;
+    }
 
     final now = DateTime.now().toIso8601String();
 
@@ -79,10 +88,15 @@ class SyncService {
       // the payload JSON.
       deviceId: license.deviceId,
     );
+    debugPrint('[SyncService] enqueued $tableName/$recordId (${operation.value})');
 
     // Try to sync immediately if online
     if (ConnectivityService.instance.isOnline) {
+      debugPrint('[SyncService] online — triggering worker for $tableName/$recordId');
       _runWorker();
+    } else {
+      debugPrint('[SyncService] offline — $tableName/$recordId queued, '
+          'will sync when network restores');
     }
   }
 
