@@ -46,8 +46,7 @@ class ConnectivityService {
 
   /// Returns true when at least one active connection is not [ConnectivityResult.none].
   bool _resultsAreOnline(List<ConnectivityResult> results) {
-    return results.isNotEmpty &&
-        results.any((r) => r != ConnectivityResult.none);
+    return results.any((r) => r != ConnectivityResult.none);
   }
 
   /// Register a callback to be called when network is restored.
