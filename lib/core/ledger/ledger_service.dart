@@ -56,16 +56,21 @@ class LedgerService {
             "got '${entry.direction}'");
       }
     }
-    final hasDebit  = entries.any((e) => e.direction == 'debit');
-    final hasCredit = entries.any((e) => e.direction == 'credit');
+    bool hasDebit = false;
+    bool hasCredit = false;
+    double totalDebit = 0.0;
+    double totalCredit = 0.0;
+    for (final entry in entries) {
+      if (entry.direction == 'debit') {
+        hasDebit = true;
+        totalDebit += entry.amount;
+      } else {
+        hasCredit = true;
+        totalCredit += entry.amount;
+      }
+    }
     if (!hasDebit)  throw StateError('Ledger imbalance: no debit entry');
     if (!hasCredit) throw StateError('Ledger imbalance: no credit entry');
-    final totalDebit = entries
-        .where((e) => e.direction == 'debit')
-        .fold(0.0, (s, e) => s + e.amount);
-    final totalCredit = entries
-        .where((e) => e.direction == 'credit')
-        .fold(0.0, (s, e) => s + e.amount);
     if ((totalDebit - totalCredit).abs() > _balanceTolerance) {
       throw StateError(
           'Ledger imbalance: debit=$totalDebit credit=$totalCredit');
