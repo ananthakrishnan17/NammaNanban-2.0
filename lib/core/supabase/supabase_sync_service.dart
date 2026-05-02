@@ -33,7 +33,10 @@ class SupabaseSyncService {
       final licenseId = await SupabaseAuthService.instance.licenseId;
       if (licenseId == null) return false;
 
-      await SupabaseClientHelper.table('bills_sync').insert({
+      // upsert instead of insert: idempotent on retry and prevents duplicate
+      // rows when both syncBill() and syncPendingBills() run for the same
+      // bill.  The conflict key matches the UNIQUE constraint on bills_sync.
+      await SupabaseClientHelper.table('bills_sync').upsert({
         'license_id': licenseId,
         'local_bill_id': localBillId,
         'bill_number': billNumber,
@@ -47,8 +50,11 @@ class SupabaseSyncService {
         'billed_by': billedBy,
         'items_json': items,
         'created_at': createdAt.toIso8601String(),
+        // updated_at enables last-write-wins on the server side so a later
+        // retry never overwrites a more-recent server row.
+        'updated_at': createdAt.toIso8601String(),
         'synced_at': DateTime.now().toIso8601String(),
-      });
+      }, onConflict: 'license_id, local_bill_id');
 
       // Update last synced bill id
       final prefs = await SharedPreferences.getInstance();
